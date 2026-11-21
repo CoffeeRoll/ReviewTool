@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useSession } from '../lib/session';
 import type { DiffStyle, Layout } from '../lib/types';
 
 export function LayoutToggle({ value, onToggle }: { value: Layout; onToggle: () => void }) {
@@ -76,5 +77,53 @@ export function ThemeToggle() {
         )}
       </svg>
     </button>
+  );
+}
+
+/** Dropdown with display options that don't need to be on screen all the time. */
+export function ViewMenu() {
+  const { ui, setUi } = useSession();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
+  }, [open]);
+  const active = (ui.ignoreWhitespace ? 1 : 0) + (ui.wrap ? 1 : 0);
+  const toggle = (label: string, key: 'wrap' | 'ignoreWhitespace' | 'showLater', hint: string, shortcut: string) => (
+    <label className="menu-item" title={hint}>
+      <input type="checkbox" checked={!!ui[key]} onChange={(e) => setUi({ [key]: e.target.checked })} />
+      <span>{label}</span>
+      <kbd>{shortcut}</kbd>
+    </label>
+  );
+  return (
+    <div className="menu" ref={ref}>
+      <button className={`btn small ${open ? 'active' : ''}`} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        View{active > 0 ? ` (${active})` : ''} ▾
+      </button>
+      {open && (
+        <div className="menu-pop" role="menu">
+          <label className="menu-item">
+            <span>Context lines</span>
+            <select className="input small" value={ui.context} onChange={(e) => setUi({ context: Number(e.target.value) })}>
+              {[3, 10, 25, 100].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          {toggle('Hide whitespace changes', 'ignoreWhitespace', 'Ignore changes that only touch whitespace', 'i')}
+          {toggle('Wrap long lines', 'wrap', 'Wrap instead of scrolling horizontally', 'w')}
+          {toggle('Dim lines rewritten later', 'showLater', 'Fade added lines that a later commit changes again (they are always marked ↻)', 'd')}
+          <div className="menu-note muted small">
+            <span className="legend moved" /> moved code · <span className="legend wd" /> changed words · ↻ n changed again in commit n
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

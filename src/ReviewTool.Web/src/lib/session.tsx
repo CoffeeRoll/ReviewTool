@@ -2,9 +2,13 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { api } from './api';
 import {
   RANGE,
+  SINCE,
   type ChangedFile,
   type DiffSide,
   type FileDiff,
+  type LaterChange,
+  type MovedBlock,
+  type NoteFollowUp,
   type NoteInput,
   type PaneSpec,
   type Review,
@@ -24,6 +28,9 @@ export const DEFAULT_UI: Required<Omit<UiState, 'activePane' | 'currentFile'>> &
   notesOpen: false,
   currentFile: null,
   sidebarWidth: 330,
+  ignoreWhitespace: false,
+  fileTree: true,
+  showLater: true,
 };
 
 export type Ui = typeof DEFAULT_UI;
@@ -67,6 +74,17 @@ interface SessionValue {
 
   isReviewed: (key: string, path: string) => boolean;
   setReviewed: (key: string, paths: string[], reviewed: boolean) => Promise<void>;
+  /** Reviewed changed-line ranges of a partially reviewed file. */
+  reviewedLines: (key: string, path: string) => string[] | undefined;
+  setLinesReviewed: (key: string, path: string, ranges: string[], reviewed: boolean) => Promise<void>;
+
+  /** Moved-code blocks of a commit (loaded on demand; undefined while loading). */
+  moved: (key: string) => MovedBlock[] | undefined;
+  loadMoved: (key: string) => void;
+  /** Lines of a file at a commit that later commits in the review change. */
+  getLaterChanges: (key: string, path: string) => Promise<LaterChange[]>;
+  /** Open notes whose code a later commit changes. */
+  followUps: NoteFollowUp[];
 
   draft: NoteDraft | null;
   setDraft: (d: NoteDraft | null) => void;
@@ -99,7 +117,10 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
   const [review, setReview] = useState<Review>(initial);
   const [ui, setUiState] = useState<Ui>(() => {
     const saved = { ...DEFAULT_UI, ...(initial.uiState ?? {}) } as Ui;
-    const valid = saved.commitKey === RANGE || initial.commits.some((c) => c.sha === saved.commitKey);
+    const valid =
+      saved.commitKey === RANGE ||
+      (saved.commitKey === SINCE && !!initial.previousHead) ||
+      initial.commits.some((c) => c.sha === saved.commitKey);
     if (!valid) saved.commitKey = initial.commits.find((c) => !c.outdated)?.sha ?? RANGE;
     return saved;
   });
@@ -108,6 +129,10 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
   const [filesByKey, setFilesByKey] = useState<Record<string, ChangedFile[]>>({});
   const [draft, setDraft] = useState<NoteDraft | null>(null);
   const [jump, setJump] = useState<JumpTarget | null>(null);
+  const [movedByKey, setMovedByKey] = useState<Record<string, MovedBlock[]>>({});
+  const [followUps, setFollowUps] = useState<NoteFollowUp[]>([]);
+  const pendingMoved = useRef(new Set<string>());
+  const laterCache = useRef(new Map<string, Promise<LaterChange[]>>());
   const pendingFiles = useRef(new Map<string, Promise<ChangedFile[]>>());
   const diffCache = useRef(new Map<string, Promise<FileDiff>>());
   const reviewId = review.id;
@@ -173,9 +198,15 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
     [setUi],
   );
 
+  const ws = !!ui.ignoreWhitespace;
   const cacheKey = useCallback(
-    (key: string) => (key === RANGE ? `${RANGE}@${review.mergeBaseSha}..${review.headSha}` : key),
-    [review.mergeBaseSha, review.headSha],
+    (key: string) =>
+      (key === RANGE
+        ? `${RANGE}@${review.mergeBaseSha}..${review.headSha}`
+        : key === SINCE
+          ? `${SINCE}@${review.previousHead?.headSha}..${review.headSha}`
+          : key) + (ws ? '|w' : ''),
+    [review.mergeBaseSha, review.headSha, review.previousHead?.headSha, ws],
   );
 
   const loadFiles = useCallback(
@@ -183,7 +214,7 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
       const ck = cacheKey(key);
       const existing = pendingFiles.current.get(ck);
       if (existing) return existing;
-      const p = api.changedFiles(reviewId, key).then(
+      const p = api.changedFiles(reviewId, key, ws).then(
         (files) => {
           setFilesByKey((prev) => ({ ...prev, [ck]: files }));
           return files;
@@ -196,7 +227,7 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
       pendingFiles.current.set(ck, p);
       return p;
     },
-    [reviewId, cacheKey],
+    [reviewId, cacheKey, ws],
   );
 
   const files = useCallback((key: string) => filesByKey[cacheKey(key)], [filesByKey, cacheKey]);
@@ -206,13 +237,53 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
       const k = `${cacheKey(key)}|${path}|${oldPath ?? ''}|${context}`;
       const hit = diffCache.current.get(k);
       if (hit) return hit;
-      const p = api.fileDiff(reviewId, key, path, oldPath, context);
+      const p = api.fileDiff(reviewId, key, path, oldPath, context, ws);
       p.catch(() => diffCache.current.delete(k));
       diffCache.current.set(k, p);
       return p;
     },
-    [reviewId, cacheKey],
+    [reviewId, cacheKey, ws],
   );
+
+  const moved = useCallback((key: string) => movedByKey[cacheKey(key)], [movedByKey, cacheKey]);
+  const loadMoved = useCallback(
+    (key: string) => {
+      const ck = cacheKey(key);
+      if (pendingMoved.current.has(ck)) return;
+      pendingMoved.current.add(ck);
+      api.moved(reviewId, key, ws).then(
+        (blocks) => setMovedByKey((prev) => ({ ...prev, [ck]: blocks })),
+        () => setMovedByKey((prev) => ({ ...prev, [ck]: [] })),
+      );
+    },
+    [reviewId, cacheKey, ws],
+  );
+
+  const getLaterChanges = useCallback(
+    (key: string, path: string) => {
+      const k = `${key}|${review.headSha}|${path}`;
+      let p = laterCache.current.get(k);
+      if (!p) {
+        p = api.laterChanges(reviewId, key, path).catch(() => [] as LaterChange[]);
+        laterCache.current.set(k, p);
+      }
+      return p;
+    },
+    [reviewId, review.headSha],
+  );
+
+  // Follow-ups depend on notes and on the commit list; recompute when either changes.
+  const notesSignature = review.notes.map((n) => `${n.id}:${n.line}:${n.endLine}:${n.resolved}`).join(',');
+  useEffect(() => {
+    let cancelled = false;
+    api.followUps(reviewId).then(
+      (f) => !cancelled && setFollowUps(f),
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewId, notesSignature, review.headSha]);
 
   const reviewedSets = useMemo(() => {
     const m = new Map<string, Set<string>>();
@@ -221,6 +292,16 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
   }, [review.reviewedFiles]);
 
   const isReviewed = useCallback((key: string, path: string) => reviewedSets.get(key)?.has(path) ?? false, [reviewedSets]);
+
+  const reviewedLines = useCallback((key: string, path: string) => review.reviewedLines?.[key]?.[path], [review.reviewedLines]);
+
+  const setLinesReviewed = useCallback(
+    async (key: string, path: string, ranges: string[], reviewed: boolean) => {
+      const updated = await track(() => api.setLinesReviewed(reviewId, key, path, ranges, reviewed));
+      if (updated) setReview((r) => ({ ...r, reviewedLines: updated.reviewedLines, updatedAt: updated.updatedAt }));
+    },
+    [reviewId, track],
+  );
 
   const setReviewed = useCallback(
     async (key: string, paths: string[], reviewed: boolean) => {
@@ -234,7 +315,8 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
         return { ...r, reviewedFiles: { ...r.reviewedFiles, [key]: [...set].sort() } };
       });
       const updated = await track(() => api.setReviewed(reviewId, key, paths, reviewed));
-      if (updated) setReview((r) => ({ ...r, reviewedFiles: updated.reviewedFiles, updatedAt: updated.updatedAt }));
+      if (updated)
+        setReview((r) => ({ ...r, reviewedFiles: updated.reviewedFiles, reviewedLines: updated.reviewedLines, updatedAt: updated.updatedAt }));
     },
     [reviewId, track],
   );
@@ -273,16 +355,21 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
   );
 
   const refresh = useCallback(async () => {
+    const before = review.previousHead?.recordedAt;
     const updated = await track(() => api.refreshReview(reviewId));
     if (!updated) return;
     pendingFiles.current.clear();
+    pendingMoved.current.clear();
     setFilesByKey({});
     setReview(updated);
+    const headMoved = !!updated.previousHead && updated.previousHead.recordedAt !== before;
     setUiState((prev) => {
-      const ok = prev.commitKey === RANGE || updated.commits.some((c) => c.sha === prev.commitKey);
+      // When new commits arrived, jump straight to what changed since the last review.
+      if (headMoved) return { ...prev, commitKey: SINCE, currentFile: null };
+      const ok = prev.commitKey === RANGE || (prev.commitKey === SINCE && !!updated.previousHead) || updated.commits.some((c) => c.sha === prev.commitKey);
       return ok ? prev : { ...prev, commitKey: updated.commits.find((c) => !c.outdated)?.sha ?? RANGE, currentFile: null };
     });
-  }, [reviewId, track]);
+  }, [reviewId, track, review.previousHead?.recordedAt]);
 
   const jumpTo = useCallback(
     (t: Omit<JumpTarget, 'nonce'>) => {
@@ -326,6 +413,12 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
     getDiff,
     isReviewed,
     setReviewed,
+    reviewedLines,
+    setLinesReviewed,
+    moved,
+    loadMoved,
+    getLaterChanges,
+    followUps,
     draft,
     setDraft,
     addNote,

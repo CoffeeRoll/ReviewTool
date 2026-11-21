@@ -192,6 +192,9 @@ const SHORTCUTS: [string, string][] = [
   ['u', 'Toggle unified / split diff'],
   ['l', 'Toggle stacked / pane layout'],
   ['w', 'Toggle line wrapping'],
+  ['i', 'Hide / show whitespace-only changes'],
+  ['d', 'Dim lines a later commit rewrites (marked ↻)'],
+  ['s', 'Changes since your last review (after a refresh)'],
   ['o', 'Open any file from the repo'],
   ['c', 'Add a note on the current commit'],
   ['Shift+N', 'Toggle notes panel'],
@@ -217,6 +220,8 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
       </table>
       <p className="muted small">
         Click the <strong>+</strong> next to any line to add a note; shift-click another line's <strong>+</strong> to extend the selection to a range.
+        Tick <strong>Hunk reviewed</strong> on a hunk header to check off part of a file. <strong>↻ n</strong> marks a line that commit n changes
+        again, and <strong>⇢ moved</strong> marks code that moved rather than changed.
       </p>
     </Modal>
   );

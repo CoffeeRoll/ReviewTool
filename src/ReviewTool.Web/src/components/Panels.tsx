@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
 import { basename, commitProgress, shortSha } from '../lib/diff';
 import { notesFor, useSession } from '../lib/session';
-import { RANGE, type ReviewNote } from '../lib/types';
+import { RANGE, SINCE, isSpecialKey, type ReviewNote } from '../lib/types';
 import { KindBadge, NoteThread } from './Notes';
 
 /** Previous/next commit for navigation; the combined view sits before the first commit. */
 export function neighbours(keys: string[], key: string): { prev: string | null; next: string | null } {
-  if (key === RANGE) return { prev: null, next: keys[0] ?? null };
+  if (key === SINCE || key === RANGE) return { prev: null, next: keys[0] ?? null };
   const i = keys.indexOf(key);
   if (i < 0) return { prev: null, next: keys[0] ?? null };
   return { prev: i > 0 ? keys[i - 1] : RANGE, next: i < keys.length - 1 ? keys[i + 1] : null };
@@ -17,7 +17,8 @@ export function CommitHeader({ onMarkAndNext }: { onMarkAndNext: () => void }) {
   const [showBody, setShowBody] = useState(true);
   const key = ui.commitKey;
   const idx = commitKeys.indexOf(key);
-  const commit = key === RANGE ? null : review.commits.find((c) => c.sha === key);
+  const commit = isSpecialKey(key) ? null : review.commits.find((c) => c.sha === key);
+  const changedCommits = review.commits.filter((c) => !c.outdated && (c.sinceLastReview === 'New' || c.sinceLastReview === 'Modified'));
   const fileList = files(key);
   const progress = commitProgress(review.reviewedFiles, key, commit?.fileCount ?? fileList?.length ?? 0);
   const commitNotes = notesFor(review, key, null);
@@ -44,6 +45,28 @@ export function CommitHeader({ onMarkAndNext }: { onMarkAndNext: () => void }) {
                 <span className="add">+{commit.additions}</span> <span className="del">−{commit.deletions}</span> in {commit.fileCount} file
                 {commit.fileCount === 1 ? '' : 's'}
               </div>
+            </>
+          ) : key === SINCE && review.previousHead ? (
+            <>
+              <div className="eyebrow">Since your last review</div>
+              <h2>What changed since {new Date(review.previousHead.recordedAt).toLocaleString()}</h2>
+              <div className="muted small">
+                <span className="mono">{shortSha(review.previousHead.headSha)}</span> → <span className="mono">{shortSha(review.headSha)}</span>
+                {fileList ? ` · ${fileList.length} files` : ''} · only files this review touches (changes that came from the base branch
+                are left out)
+              </div>
+              {changedCommits.length > 0 ? (
+                <div className="since-commits">
+                  {changedCommits.map((c) => (
+                    <button key={c.sha} className="chip" onClick={() => selectCommit(c.sha)} title={c.subject}>
+                      <span className={`change-badge change-${c.sinceLastReview!.toLowerCase()}`}>{c.sinceLastReview === 'New' ? 'new' : 'changed'}</span>
+                      {c.subject}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="muted small">No commits were added or rewritten — the branch was only rebased.</div>
+              )}
             </>
           ) : (
             <>
@@ -95,8 +118,10 @@ export function CommitHeader({ onMarkAndNext }: { onMarkAndNext: () => void }) {
 type NoteFilter = 'open' | 'all' | 'here';
 
 export function NotesPanel({ onClose, onExport }: { onClose: () => void; onExport: () => void }) {
-  const { review, ui, jumpTo } = useSession();
+  const { review, ui, jumpTo, followUps } = useSession();
   const [filter, setFilter] = useState<NoteFilter>('open');
+  const followUpByNote = useMemo(() => new Map(followUps.map((f) => [f.noteId, f])), [followUps]);
+  const commitNumber = (sha: string) => review.commits.filter((c) => !c.outdated).findIndex((c) => c.sha === sha) + 1;
 
   const groups = useMemo(() => {
     const order = new Map(review.commits.map((c, i) => [c.sha, i]));
@@ -144,7 +169,7 @@ export function NotesPanel({ onClose, onExport }: { onClose: () => void; onExpor
         {groups.map((g) => (
           <div key={g.sha} className="notes-group">
             <div className="notes-group-title">
-              {g.sha === RANGE ? 'All changes' : <><span className="mono">{shortSha(g.sha)}</span> {g.commit?.subject}</>}
+              {g.sha === RANGE ? 'All changes' : g.sha === SINCE ? 'Since last review' : <><span className="mono">{shortSha(g.sha)}</span> {g.commit?.subject}</>}
               {g.commit?.outdated && <span className="pill warn">outdated</span>}
             </div>
             {g.notes.map((n) => (
@@ -159,6 +184,11 @@ export function NotesPanel({ onClose, onExport }: { onClose: () => void; onExpor
                     {n.filePath ? `${basename(n.filePath)}${n.line ? `:${n.line}${n.endLine ? `-${n.endLine}` : ''}` : ''}` : 'commit note'}
                   </span>
                   {n.resolved && <span className="muted small">resolved</span>}
+                  {followUpByNote.has(n.id) && (
+                    <span className="pill later-pill" title="A later commit changes the code this note is about">
+                      ↻ changed in {commitNumber(followUpByNote.get(n.id)!.commitSha)}
+                    </span>
+                  )}
                 </span>
                 <span className="note-link-body">{n.body}</span>
               </button>

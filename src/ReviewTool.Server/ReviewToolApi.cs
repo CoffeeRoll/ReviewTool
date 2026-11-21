@@ -23,6 +23,8 @@ public sealed class ReviewToolOptions
 
 public sealed record SetReviewedRequest(List<string> Paths, bool Reviewed);
 
+public sealed record SetLinesReviewedRequest(string Path, List<string> Ranges, bool Reviewed);
+
 /// <summary>
 /// Registration helpers so the review API can be hosted by this server or embedded in another ASP.NET Core app.
 /// </summary>
@@ -96,10 +98,19 @@ public static class ReviewToolApi
             await svc.DeleteAsync(id, ct) ? TypedResults.NoContent() : TypedResults.NotFound());
         reviews.MapPost("/{id}/refresh", (string id, ReviewService svc, CancellationToken ct) => svc.RefreshAsync(id, ct));
 
-        reviews.MapGet("/{id}/commits/{commit}/files", (string id, string commit, ReviewService svc, CancellationToken ct) =>
-            svc.GetChangedFilesAsync(id, commit, ct));
-        reviews.MapGet("/{id}/commits/{commit}/diff", (string id, string commit, string path, string? oldPath, int? context, ReviewService svc, CancellationToken ct) =>
-            svc.GetFileDiffAsync(id, commit, path, oldPath, context ?? 3, ct));
+        reviews.MapGet("/{id}/commits/{commit}/files", (string id, string commit, bool? ignoreWhitespace, ReviewService svc, CancellationToken ct) =>
+            svc.GetChangedFilesAsync(id, commit, ct, ignoreWhitespace ?? false));
+        reviews.MapGet("/{id}/commits/{commit}/diff", (string id, string commit, string path, string? oldPath, int? context, bool? ignoreWhitespace, ReviewService svc, CancellationToken ct) =>
+            svc.GetFileDiffAsync(id, commit, path, oldPath, context ?? 3, ct, ignoreWhitespace ?? false));
+        reviews.MapGet("/{id}/commits/{commit}/moved", (string id, string commit, bool? ignoreWhitespace, ReviewService svc, CancellationToken ct) =>
+            svc.GetMovedBlocksAsync(id, commit, ignoreWhitespace ?? false, ct));
+        reviews.MapGet("/{id}/commits/{commit}/later-changes", (string id, string commit, string path, ReviewService svc, CancellationToken ct) =>
+            svc.GetLaterChangesAsync(id, commit, path, ct));
+        reviews.MapPut("/{id}/commits/{commit}/reviewed-lines", (string id, string commit, SetLinesReviewedRequest req, ReviewService svc, CancellationToken ct) =>
+            svc.SetLinesReviewedAsync(id, commit, req.Path, req.Ranges ?? [], req.Reviewed, ct));
+        reviews.MapGet("/{id}/file-history", (string id, string path, ReviewService svc, CancellationToken ct) =>
+            svc.GetFileHistoryAsync(id, path, ct));
+        reviews.MapGet("/{id}/followups", (string id, ReviewService svc, CancellationToken ct) => svc.GetNoteFollowUpsAsync(id, ct));
         reviews.MapGet("/{id}/commits/{commit}/tree", (string id, string commit, ReviewService svc, CancellationToken ct) =>
             svc.ListTreeAsync(id, commit, ct));
         reviews.MapGet("/{id}/commits/{commit}/blob", (string id, string commit, string path, DiffSide? side, ReviewService svc, CancellationToken ct) =>

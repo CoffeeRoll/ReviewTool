@@ -12,6 +12,11 @@ public sealed class Review
     /// <summary>Key used instead of a commit SHA for the combined "whole PR" diff.</summary>
     public const string RangeKey = "range";
 
+    /// <summary>Key for the diff between the previously reviewed head and the current head.</summary>
+    public const string SinceKey = "since";
+
+    public static bool IsSpecialKey(string key) => key is RangeKey or SinceKey;
+
     public int SchemaVersion { get; set; } = 1;
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
@@ -43,6 +48,15 @@ public sealed class Review
 
     /// <summary>Reviewed file paths keyed by commit SHA (or <see cref="RangeKey"/>).</summary>
     public Dictionary<string, List<string>> ReviewedFiles { get; set; } = [];
+
+    /// <summary>
+    /// Partially reviewed files: commit key → path → changed-line ranges already reviewed,
+    /// encoded like <c>N12-20</c> (new side) or <c>O5</c> (old side). See <see cref="LineRangeSet"/>.
+    /// </summary>
+    public Dictionary<string, Dictionary<string, List<string>>> ReviewedLines { get; set; } = [];
+
+    /// <summary>The head that was reviewed before the most recent refresh that moved it.</summary>
+    public ReviewSnapshot? PreviousHead { get; set; }
 
     public List<ReviewNote> Notes { get; set; } = [];
 
@@ -88,6 +102,33 @@ public sealed class ReviewCommit
 
     /// <summary>True when the commit is no longer part of the range (e.g. after a force push). Kept for its notes.</summary>
     public bool Outdated { get; set; }
+
+    /// <summary>How this commit relates to the previously reviewed head (null when there was no previous head).</summary>
+    public CommitChange? SinceLastReview { get; set; }
+
+    /// <summary>The matching commit before the last refresh (same patch, or same subject when modified).</summary>
+    public string? PreviousSha { get; set; }
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<CommitChange>))]
+public enum CommitChange
+{
+    /// <summary>Same patch as a previously reviewed commit (e.g. only rebased).</summary>
+    Unchanged,
+
+    /// <summary>A previously reviewed commit (matched by subject) whose changes differ.</summary>
+    Modified,
+
+    /// <summary>Not present before.</summary>
+    New,
+}
+
+public sealed class ReviewSnapshot
+{
+    public string HeadSha { get; set; } = "";
+    public string MergeBaseSha { get; set; } = "";
+    public string BaseSha { get; set; } = "";
+    public DateTimeOffset RecordedAt { get; set; }
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<NoteKind>))]

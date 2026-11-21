@@ -27,6 +27,13 @@
   --hunk-bg: #eef4ff;
   --selected-bg: #fff6c7;
   --flash-bg: #ffe58a;
+  --wd-add: #abf2bc;
+  --wd-del: #ffc1bc;
+  --moved-bg: #f3ecff;
+  --moved-ln: #e6dbff;
+  --moved-text: #6639ba;
+  --later: #b35900;
+  --later-bg: #fff1e0;
 
   --hl-keyword: #cf222e;
   --hl-string: #0a3069;
@@ -71,6 +78,13 @@
     --hunk-bg: rgba(56, 139, 253, 0.1);
     --selected-bg: rgba(187, 128, 9, 0.25);
     --flash-bg: rgba(187, 128, 9, 0.5);
+    --wd-add: rgba(46, 160, 67, 0.45);
+    --wd-del: rgba(248, 81, 73, 0.45);
+    --moved-bg: rgba(163, 113, 247, 0.13);
+    --moved-ln: rgba(163, 113, 247, 0.22);
+    --moved-text: #c4a5ff;
+    --later: #f0a050;
+    --later-bg: rgba(240, 160, 80, 0.14);
     --hl-keyword: #ff7b72;
     --hl-string: #a5d6ff;
     --hl-number: #79c0ff;
@@ -110,6 +124,13 @@
   --hunk-bg: rgba(56, 139, 253, 0.1);
   --selected-bg: rgba(187, 128, 9, 0.25);
   --flash-bg: rgba(187, 128, 9, 0.5);
+  --wd-add: rgba(46, 160, 67, 0.45);
+  --wd-del: rgba(248, 81, 73, 0.45);
+  --moved-bg: rgba(163, 113, 247, 0.13);
+  --moved-ln: rgba(163, 113, 247, 0.22);
+  --moved-text: #c4a5ff;
+  --later: #f0a050;
+  --later-bg: rgba(240, 160, 80, 0.14);
   --hl-keyword: #ff7b72;
   --hl-string: #a5d6ff;
   --hl-number: #79c0ff;
@@ -1471,4 +1492,291 @@ textarea:focus {
 .theme-btn {
   display: inline-grid;
   place-items: center;
+}
+
+/* ---------- Diff reading aids ---------- */
+.wd {
+  border-radius: 2px;
+}
+.wd-add {
+  background: var(--wd-add);
+}
+.wd-del {
+  background: var(--wd-del);
+}
+.line.moved .code,
+.code.moved {
+  background: var(--moved-bg);
+}
+.line.moved .ln {
+  background: var(--moved-ln);
+}
+.line.moved .marker,
+.code.moved .marker {
+  color: var(--moved-text);
+}
+.line.superseded .src,
+.code.superseded .src {
+  opacity: 0.55;
+}
+.badges {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 10px;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 600 10.5px/16px var(--sans);
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chip:hover {
+  border-color: currentColor;
+}
+.moved-chip {
+  color: var(--moved-text);
+  border-color: var(--moved-ln);
+}
+.later-chip {
+  color: var(--later);
+  background: var(--later-bg);
+  border-color: transparent;
+}
+.later-pill {
+  color: var(--later);
+  background: var(--later-bg);
+}
+
+/* Hunk headers with per-hunk review */
+.hunk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 22px;
+}
+.hunk-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 12px var(--sans);
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.hunk-check input {
+  margin: 0;
+}
+.hunk-row.hunk-done td {
+  background: color-mix(in srgb, var(--ok) 10%, var(--surface));
+}
+.hunk-row.hunk-done .hunk-check {
+  color: var(--ok);
+}
+
+/* Notes carried forward from an earlier commit */
+.carried-note {
+  background: var(--surface);
+  border: 1px dashed var(--later);
+  border-left: 3px solid var(--later);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  max-width: 900px;
+  margin-bottom: 8px;
+}
+.carried-label {
+  font-weight: 600;
+  color: var(--later);
+  font-size: 12px;
+}
+.followup-link {
+  display: block;
+  margin-top: 4px;
+  color: var(--later);
+  text-align: left;
+}
+
+/* Commit list: since-last-review */
+.commit.since {
+  background: var(--later-bg);
+  margin-bottom: 2px;
+}
+.commit.since.selected {
+  background: var(--accent-soft);
+}
+.change-badge {
+  display: inline-block;
+  font: 700 9.5px/14px var(--sans);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 5px;
+  border-radius: 4px;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.change-new {
+  color: #fff;
+  background: var(--accent);
+}
+.change-modified {
+  color: #1c1300;
+  background: var(--later);
+}
+.since-commits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.since-commits .chip {
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text);
+}
+
+/* File tree */
+.file-list.nested {
+  padding: 0;
+}
+.folder-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12.5px;
+}
+.folder-item:hover {
+  background: var(--surface-2);
+}
+.folder-item .chevron {
+  width: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.folder-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-weight: 600;
+}
+.file-item.generated .file-name {
+  opacity: 0.6;
+}
+.seg.mini button {
+  padding: 1px 6px;
+  font-size: 10.5px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* History pane */
+.history-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.history-dots {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+.history-dots .dot {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--muted);
+  font: 600 11px var(--mono);
+  cursor: pointer;
+}
+.history-dots .dot.current {
+  border-color: var(--accent);
+}
+.history-dots .dot.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.history-subject {
+  min-width: 0;
+  flex: 1;
+}
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* View menu */
+.menu {
+  position: relative;
+}
+.menu-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  width: 290px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.menu-item:hover {
+  background: var(--surface-2);
+}
+.menu-item span {
+  flex: 1;
+}
+.menu-note {
+  padding: 6px 8px 2px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.legend {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+.legend.moved {
+  background: var(--moved-ln);
+}
+.legend.wd {
+  background: var(--wd-add);
 }

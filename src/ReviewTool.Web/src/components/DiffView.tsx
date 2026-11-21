@@ -1,12 +1,17 @@
-import { Fragment, useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { anchorFor, anchorKey, hiddenLinesBefore, linesText, noteAnchorKey, toSplitRows, type LineAnchor } from '../lib/diff';
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { anchorFor, anchorKey, basename, hiddenLinesBefore, linesText, noteAnchorKey, toSplitRows, type LineAnchor } from '../lib/diff';
 import { highlightLine, languageFor } from '../lib/highlight';
+import { hunkRanges, isHunkReviewed, parseRanges } from '../lib/ranges';
 import { notesFor, useSession, type NoteDraft } from '../lib/session';
-import type { DiffHunk, DiffLine, FileDiff, ReviewNote } from '../lib/types';
-import { NoteCard, NoteThread } from './Notes';
+import { isSpecialKey, type DiffHunk, type DiffLine, type FileDiff, type LaterChange, type MovedBlock, type NoteFollowUp, type ReviewNote } from '../lib/types';
+import { markRanges, wordDiff, type Range } from '../lib/worddiff';
+import { KindBadge, NoteCard, NoteThread } from './Notes';
 
 /** Jumps already scrolled to, so remounting a view doesn't scroll again. */
 const handledJumps = new Set<number>();
+
+/** Above this many rendered lines, the rest of a diff is behind a "show more" button. */
+const RENDER_LIMIT = 2000;
 
 interface Props {
   /** Unique id of the place this view is rendered (so only one copy shows the draft editor). */
@@ -23,16 +28,116 @@ interface Props {
   stale?: boolean;
 }
 
+interface MovedInfo {
+  block: MovedBlock;
+  first: boolean;
+  /** 'out' = this deleted line was moved elsewhere; 'in' = this added line was moved here. */
+  dir: 'out' | 'in';
+}
+
+interface Decorations {
+  ranges?: Range[];
+  moved?: MovedInfo;
+  later?: LaterChange;
+}
+
 export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plain, stale }: Props) {
-  const { review, ui, draft, setDraft, jump } = useSession();
+  const session = useSession();
+  const { review, ui, draft, setDraft, jump, jumpTo } = session;
   const lang = useMemo(() => languageFor(path), [path]);
   const tableRef = useRef<HTMLTableElement>(null);
   const split = ui.diffStyle === 'split' && !plain;
+  const [limit, setLimit] = useState(RENDER_LIMIT);
+  const [openHunks, setOpenHunks] = useState<Set<number>>(new Set());
+  const isCommit = !isSpecialKey(commitKey);
 
   const notes = useMemo(() => notesFor(review, commitKey, path), [review, commitKey, path]);
+  const commitNumber = useMemo(() => {
+    const m = new Map<string, number>();
+    review.commits.filter((c) => !c.outdated).forEach((c, i) => m.set(c.sha, i + 1));
+    return m;
+  }, [review.commits]);
+
+  // ---- Moved code (computed per commit across all files) ----
+  const { loadMoved } = session;
+  useEffect(() => {
+    if (!plain) loadMoved(commitKey);
+  }, [plain, commitKey, loadMoved]);
+  const movedBlocks = session.moved(commitKey);
+  const moved = useMemo(() => {
+    const out = new Map<number, MovedInfo>();
+    const inn = new Map<number, MovedInfo>();
+    const oldPath = diff.oldPath ?? path;
+    for (const block of movedBlocks ?? []) {
+      if (block.fromPath === oldPath)
+        for (let l = block.fromStart; l <= block.fromEnd; l++) out.set(l, { block, first: l === block.fromStart, dir: 'out' });
+      if (block.toPath === path) for (let l = block.toStart; l <= block.toEnd; l++) inn.set(l, { block, first: l === block.toStart, dir: 'in' });
+    }
+    return { out, inn };
+  }, [movedBlocks, diff.oldPath, path]);
+
+  // ---- Lines a later commit rewrites ----
+  const [later, setLater] = useState<Map<number, LaterChange>>(new Map());
+  const { getLaterChanges } = session;
+  useEffect(() => {
+    if (plain || !isCommit || diff.status === 'Deleted') {
+      setLater(new Map());
+      return;
+    }
+    let cancelled = false;
+    getLaterChanges(commitKey, path).then((list) => !cancelled && setLater(new Map(list.map((c) => [c.line, c]))));
+    return () => {
+      cancelled = true;
+    };
+  }, [plain, isCommit, commitKey, path, diff.status, getLaterChanges]);
+
+  // ---- Notes carried over from earlier commits whose code this commit changes ----
+  const carried = useMemo(() => {
+    const map = new Map<string, { followUp: NoteFollowUp; note: ReviewNote }[]>();
+    for (const f of session.followUps) {
+      if (f.commitSha !== commitKey || f.path !== path) continue;
+      const note = review.notes.find((n) => n.id === f.noteId);
+      if (!note) continue;
+      const key = `Old:${f.endLine}`;
+      map.set(key, [...(map.get(key) ?? []), { followUp: f, note }]);
+    }
+    return map;
+  }, [session.followUps, review.notes, commitKey, path]);
+
+  // ---- Per-line decorations: intra-line word changes, moves, later rewrites ----
+  const decorations = useMemo(() => {
+    const deco = new Map<DiffLine, Decorations>();
+    const get = (l: DiffLine) => deco.get(l) ?? (deco.set(l, {}), deco.get(l)!);
+    for (const h of diff.hunks) {
+      for (const l of h.lines) {
+        if (l.type === 'Delete' && moved.out.has(l.oldLine!)) get(l).moved = moved.out.get(l.oldLine!);
+        if (l.type === 'Add') {
+          if (moved.inn.has(l.newLine!)) get(l).moved = moved.inn.get(l.newLine!);
+          const lc = later.get(l.newLine!);
+          if (lc) get(l).later = lc;
+        }
+      }
+      if (plain) continue;
+      for (const row of toSplitRows(h.lines)) {
+        if (!row.left || !row.right || row.left.type !== 'Delete') continue;
+        if (deco.get(row.left)?.moved || deco.get(row.right)?.moved) continue;
+        const wd = wordDiff(row.left.text, row.right.text);
+        if (!wd) continue;
+        get(row.left).ranges = wd.old;
+        get(row.right).ranges = wd.new;
+      }
+    }
+    return deco;
+  }, [diff, moved, later, plain]);
+
+  const laterAdded = useMemo(() => {
+    const set = new Set<number>();
+    for (const h of diff.hunks) for (const l of h.lines) if (l.type === 'Add' && later.has(l.newLine!)) set.add(l.newLine!);
+    return set;
+  }, [diff, later]);
 
   // Index notes by the line they render under; anything we can't place goes in the header.
-  const { byAnchor, unplaced } = useMemo(() => {
+  const { byAnchor, unplaced, unplacedCarried } = useMemo(() => {
     const present = new Set<string>();
     for (const h of diff.hunks) for (const l of h.lines) present.add(anchorKey(anchorFor(l)));
     const map = new Map<string, ReviewNote[]>();
@@ -42,8 +147,36 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
       if (key && present.has(key)) map.set(key, [...(map.get(key) ?? []), n]);
       else rest.push(n);
     }
-    return { byAnchor: map, unplaced: rest };
-  }, [diff, notes]);
+    const restCarried = [...carried.entries()].filter(([k]) => !present.has(k)).flatMap(([, v]) => v);
+    return { byAnchor: map, unplaced: rest, unplacedCarried: restCarried };
+  }, [diff, notes, carried]);
+
+  // ---- Hunk-level review progress ----
+  const fileReviewed = session.isReviewed(commitKey, path);
+  const lineRanges = session.reviewedLines(commitKey, path);
+  const reviewedSet = useMemo(() => parseRanges(lineRanges), [lineRanges]);
+  const hunkDone = (h: DiffHunk) => fileReviewed || isHunkReviewed(h, reviewedSet);
+  const reviewable = !plain && diff.hunks.some((h) => h.lines.some((l) => l.type !== 'Context'));
+
+  const toggleHunk = async (index: number) => {
+    const hunk = diff.hunks[index];
+    if (fileReviewed) {
+      // Un-reviewing one hunk of a reviewed file: keep the others reviewed.
+      await session.setReviewed(commitKey, [path], false);
+      const others = diff.hunks.filter((_, i) => i !== index).flatMap(hunkRanges);
+      if (others.length) await session.setLinesReviewed(commitKey, path, others, true);
+      return;
+    }
+    const nowReviewed = !isHunkReviewed(hunk, reviewedSet);
+    await session.setLinesReviewed(commitKey, path, hunkRanges(hunk), nowReviewed);
+    if (nowReviewed && diff.hunks.every((h, i) => i === index || isHunkReviewed(h, reviewedSet) || !h.lines.some((l) => l.type !== 'Context')))
+      await session.setReviewed(commitKey, [path], true);
+    setOpenHunks((s) => {
+      const next = new Set(s);
+      next.delete(index);
+      return next;
+    });
+  };
 
   const myDraft = draft && draft.viewId === viewId && draft.commitKey === commitKey && draft.path === path ? draft : null;
   const draftKey = myDraft && myDraft.line != null ? `${myDraft.side}:${myDraft.endLine ?? myDraft.line}` : null;
@@ -62,11 +195,11 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
 
   const getLineText = (d: NoteDraft) => (d.line == null ? null : linesText(diff, d.side, d.line, d.endLine ?? d.line));
 
-  // Scroll to a jump target (from the notes panel or a deep link).
+  // Scroll to a jump target (from the notes panel, a moved-code link or a later-change marker).
   useEffect(() => {
     if (stale || !jump || handledJumps.has(jump.nonce) || jump.commitKey !== commitKey || jump.path !== path || jump.line == null || !tableRef.current) return;
     const key = `${jump.side ?? 'New'}:${jump.line}`;
-    const row = tableRef.current.querySelector<HTMLElement>(`tr[data-anchor="${key}"]`);
+    const row = tableRef.current.querySelector<HTMLElement>(`tr[data-anchor="${key}"], tr[data-anchor-old="${key}"]`);
     if (row) {
       handledJumps.add(jump.nonce);
       row.scrollIntoView({ block: 'center' });
@@ -80,8 +213,14 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
   if (diff.hunks.length === 0) {
     return (
       <div className="diff-message">
-        {diff.status === 'Renamed' || diff.status === 'Copied' ? 'File renamed without content changes.' : diff.oldMode !== diff.newMode && diff.oldMode && diff.newMode ? `Mode changed ${diff.oldMode} → ${diff.newMode}.` : 'No content changes.'}
-        <FileLevelNotes notes={notes} viewId={viewId} commitKey={commitKey} path={path} />
+        {ui.ignoreWhitespace
+          ? 'Only whitespace changes (hidden).'
+          : diff.status === 'Renamed' || diff.status === 'Copied'
+            ? 'File renamed without content changes.'
+            : diff.oldMode !== diff.newMode && diff.oldMode && diff.newMode
+              ? `Mode changed ${diff.oldMode} → ${diff.newMode}.`
+              : 'No content changes.'}
+        <FileLevelNotes notes={notes} carried={[]} viewId={viewId} commitKey={commitKey} path={path} />
       </div>
     );
   }
@@ -89,45 +228,134 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
   const threadFor = (key: string | null): ReactNode => {
     if (!key) return null;
     const list = byAnchor.get(key) ?? [];
+    const carriedHere = carried.get(key) ?? [];
     const showDraft = draftKey === key;
-    if (list.length === 0 && !showDraft) return null;
-    return <NoteThread notes={list} draft={showDraft ? myDraft : null} getLineText={getLineText} />;
+    if (list.length === 0 && carriedHere.length === 0 && !showDraft) return null;
+    return (
+      <>
+        {carriedHere.map((c) => (
+          <CarriedNote key={c.note.id} note={c.note} followUp={c.followUp} />
+        ))}
+        {(list.length > 0 || showDraft) && <NoteThread notes={list} draft={showDraft ? myDraft : null} getLineText={getLineText} />}
+      </>
+    );
+  };
+
+  const goMoved = (m: MovedInfo) =>
+    m.dir === 'out'
+      ? jumpTo({ commitKey, path: m.block.toPath, side: 'New', line: m.block.toStart })
+      : jumpTo({ commitKey, path: m.block.fromPath, side: 'Old', line: m.block.fromStart });
+  const goLater = (c: LaterChange) => jumpTo({ commitKey: c.commitSha, path, side: 'Old', line: c.oldLine });
+
+  const badges = (line: DiffLine): ReactNode => {
+    const d = decorations.get(line);
+    if (!d) return null;
+    const out: ReactNode[] = [];
+    if (d.moved?.first) {
+      const b = d.moved.block;
+      const target = d.moved.dir === 'out' ? `${b.toPath === path ? '' : basename(b.toPath)}:${b.toStart}` : `${b.fromPath === (diff.oldPath ?? path) ? '' : basename(b.fromPath)}:${b.fromStart}`;
+      out.push(
+        <button key="m" className="chip moved-chip" onClick={() => goMoved(d.moved!)} title={`${b.toEnd - b.toStart + 1} lines moved ${d.moved.dir === 'out' ? 'to' : 'from'} ${d.moved.dir === 'out' ? b.toPath : b.fromPath}`}>
+          {d.moved.dir === 'out' ? '⇢ moved to' : '⇠ moved from'} {target.startsWith(':') ? `line ${target.slice(1)}` : target}
+        </button>,
+      );
+    }
+    // One chip per run of consecutive lines rewritten by the same later commit.
+    const prevLater = line.newLine != null ? later.get(line.newLine - 1) : undefined;
+    const runContinues = !!prevLater && prevLater.commitSha === d.later?.commitSha && laterAdded.has(line.newLine! - 1);
+    if (d.later && !runContinues) {
+      const n = commitNumber.get(d.later.commitSha);
+      const subject = review.commits.find((c) => c.sha === d.later!.commitSha)?.subject ?? '';
+      out.push(
+        <button key="l" className="chip later-chip" onClick={() => goLater(d.later!)} title={`Changed again in commit ${n}: ${subject}`}>
+          ↻ {n}
+        </button>,
+      );
+    }
+    return out.length ? out : null;
+  };
+
+  const lineClass = (line: DiffLine) => {
+    const d = decorations.get(line);
+    return `${d?.moved ? 'moved' : ''} ${d?.later && ui.showLater ? 'superseded' : ''}`;
   };
 
   const cols = split ? 4 : plain ? 2 : 3;
   const rows: ReactNode[] = [];
+  let rendered = 0;
+  let remaining = 0;
   diff.hunks.forEach((hunk, hi) => {
+    if (rendered >= limit) {
+      remaining += hunk.lines.length;
+      return;
+    }
     const hidden = plain ? 0 : hiddenLinesBefore(diff.hunks, hi);
+    const done = reviewable && hunkDone(hunk);
+    const collapsed = done && !openHunks.has(hi);
+    const changes = hunk.lines.filter((l) => l.type !== 'Context').length;
     if (!plain) {
       rows.push(
-        <tr key={`h${hi}`} className="hunk-row">
+        <tr key={`h${hi}`} className={`hunk-row ${done ? 'hunk-done' : ''}`}>
           <td colSpan={cols}>
-            {hidden > 0 && !isFull && onExpand ? (
-              <button className="expand" onClick={onExpand} title="Show the full file">
-                ⋯ {hidden} unchanged line{hidden === 1 ? '' : 's'}
-              </button>
-            ) : null}
-            <span className="hunk-header mono">
-              @@ -{hunk.oldStart},{hunk.oldCount} +{hunk.newStart},{hunk.newCount} @@ {hunk.header}
-            </span>
+            <div className="hunk-bar">
+              {hidden > 0 && !isFull && onExpand ? (
+                <button className="expand" onClick={onExpand} title="Show the full file">
+                  ⋯ {hidden} unchanged line{hidden === 1 ? '' : 's'}
+                </button>
+              ) : null}
+              <span className="hunk-header mono">
+                @@ -{hunk.oldStart},{hunk.oldCount} +{hunk.newStart},{hunk.newCount} @@ {hunk.header}
+              </span>
+              <span className="spacer" />
+              {collapsed && (
+                <button className="expand" onClick={() => setOpenHunks((s) => new Set(s).add(hi))}>
+                  show {changes} reviewed change{changes === 1 ? '' : 's'}
+                </button>
+              )}
+              {done && !collapsed && (
+                <button
+                  className="expand"
+                  onClick={() =>
+                    setOpenHunks((s) => {
+                      const n = new Set(s);
+                      n.delete(hi);
+                      return n;
+                    })
+                  }
+                >
+                  hide
+                </button>
+              )}
+              {reviewable && changes > 0 && (
+                <label className="hunk-check" title="Mark just this part of the file as reviewed">
+                  <input type="checkbox" checked={done} onChange={() => toggleHunk(hi)} /> {done ? 'Reviewed' : 'Hunk reviewed'}
+                </label>
+              )}
+            </div>
           </td>
         </tr>,
       );
     }
+    if (collapsed) return;
     if (split) renderSplit(hunk, hi);
     else renderUnified(hunk, hi);
   });
 
   function renderUnified(hunk: DiffHunk, hi: number) {
     hunk.lines.forEach((line, li) => {
+      if (rendered >= limit) {
+        remaining++;
+        return;
+      }
+      rendered++;
       const a = anchorFor(line);
       const key = anchorKey(a);
-      const cls = `line ${line.type.toLowerCase()} ${inDraft(a) ? 'selected' : ''}`;
+      const cls = `line ${line.type.toLowerCase()} ${inDraft(a) ? 'selected' : ''} ${lineClass(line)}`;
       rows.push(
         <tr key={`${hi}-${li}`} className={cls} data-anchor={key}>
           {!plain && <td className="ln">{line.oldLine ?? ''}</td>}
           <td className="ln">{line.newLine ?? ''}</td>
-          <CodeCell line={line} lang={lang} anchor={a} onAdd={onGutterClick} marker={!plain} />
+          <CodeCell line={line} lang={lang} anchor={a} onAdd={onGutterClick} marker={!plain} ranges={decorations.get(line)?.ranges} badges={badges(line)} />
         </tr>,
       );
       const thread = threadFor(key);
@@ -143,12 +371,18 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
 
   function renderSplit(hunk: DiffHunk, hi: number) {
     toSplitRows(hunk.lines).forEach((row, ri) => {
+      if (rendered >= limit) {
+        remaining++;
+        return;
+      }
+      rendered++;
       const isContext = row.left?.type === 'Context';
       const la: LineAnchor | null = row.left ? (isContext ? anchorFor(row.left) : { side: 'Old', line: row.left.oldLine! }) : null;
       const ra: LineAnchor | null = row.right ? anchorFor(row.right) : null;
-      const anchorAttr = ra ? anchorKey(ra) : la ? anchorKey(la) : undefined;
+      // Deleted lines are addressable by their old-side anchor too (for jumps to "Old:n").
+      const anchorAttr = !isContext && la && !ra ? anchorKey(la) : ra ? anchorKey(ra) : la ? anchorKey(la) : undefined;
       rows.push(
-        <tr key={`${hi}-${ri}`} className={`line split ${isContext ? 'context' : ''}`} data-anchor={anchorAttr}>
+        <tr key={`${hi}-${ri}`} className={`line split ${isContext ? 'context' : ''}`} data-anchor={anchorAttr} data-anchor-old={la && !isContext ? anchorKey(la) : undefined}>
           <td className={`ln ${row.left ? (isContext ? '' : 'delete') : 'empty'}`}>{row.left?.oldLine ?? ''}</td>
           {row.left ? (
             <CodeCell
@@ -157,7 +391,9 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
               anchor={la!}
               onAdd={onGutterClick}
               marker
-              extraClass={`${isContext ? 'context' : 'delete'} ${inDraft(la) ? 'selected' : ''}`}
+              ranges={decorations.get(row.left)?.ranges}
+              badges={isContext ? null : badges(row.left)}
+              extraClass={`${isContext ? 'context' : 'delete'} ${inDraft(la) ? 'selected' : ''} ${lineClass(row.left)}`}
             />
           ) : (
             <td className="code empty" />
@@ -170,7 +406,9 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
               anchor={ra!}
               onAdd={onGutterClick}
               marker
-              extraClass={`${isContext ? 'context' : 'add'} ${inDraft(ra) ? 'selected' : ''}`}
+              ranges={decorations.get(row.right)?.ranges}
+              badges={badges(row.right)}
+              extraClass={`${isContext ? 'context' : 'add'} ${inDraft(ra) ? 'selected' : ''} ${lineClass(row.right)}`}
             />
           ) : (
             <td className="code empty" />
@@ -193,7 +431,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
   const last = diff.hunks[diff.hunks.length - 1];
   return (
     <div className={`diff ${ui.wrap ? 'wrap' : ''}`}>
-      <FileLevelNotes notes={unplaced} viewId={viewId} commitKey={commitKey} path={path} />
+      <FileLevelNotes notes={unplaced} carried={unplacedCarried} viewId={viewId} commitKey={commitKey} path={path} />
       <div className="diff-scroll">
         <table ref={tableRef} className={`diff-table ${split ? 'split' : 'unified'} ${plain ? 'plain' : ''}`}>
           <colgroup>
@@ -216,7 +454,16 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
             {rows.map((r, i) => (
               <Fragment key={i}>{r}</Fragment>
             ))}
-            {!plain && !isFull && onExpand && last && diff.status !== 'Deleted' && diff.status !== 'Added' && (
+            {remaining > 0 && (
+              <tr className="hunk-row">
+                <td colSpan={cols}>
+                  <button className="expand" onClick={() => setLimit((l) => l + RENDER_LIMIT * 5)}>
+                    ⋯ {remaining.toLocaleString()} more lines not rendered yet — show more
+                  </button>
+                </td>
+              </tr>
+            )}
+            {remaining === 0 && !plain && !isFull && onExpand && last && diff.status !== 'Deleted' && diff.status !== 'Added' && (
               <tr className="hunk-row">
                 <td colSpan={cols}>
                   <button className="expand" onClick={onExpand}>
@@ -233,12 +480,14 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
   );
 }
 
-function CodeCell({
+const CodeCell = memo(function CodeCell({
   line,
   lang,
   anchor,
   onAdd,
   marker,
+  ranges,
+  badges,
   extraClass = '',
 }: {
   line: DiffLine;
@@ -246,9 +495,14 @@ function CodeCell({
   anchor: LineAnchor;
   onAdd: (a: LineAnchor, extend: boolean) => void;
   marker: boolean;
+  ranges?: Range[];
+  badges?: ReactNode;
   extraClass?: string;
 }) {
-  const html = useMemo(() => highlightLine(line.text, lang), [line.text, lang]);
+  const html = useMemo(() => {
+    const base = highlightLine(line.text, lang);
+    return ranges && ranges.length ? markRanges(base, ranges, line.type === 'Delete' ? 'wd wd-del' : 'wd wd-add') : base;
+  }, [line.text, line.type, lang, ranges]);
   const sign = line.type === 'Add' ? '+' : line.type === 'Delete' ? '-' : ' ';
   return (
     <td className={`code ${extraClass}`}>
@@ -263,20 +517,65 @@ function CodeCell({
       {marker && <span className="marker">{sign}</span>}
       <span className="src" dangerouslySetInnerHTML={{ __html: html || ' ' }} />
       {line.noNewlineAtEnd && <span className="no-eol" title="No newline at end of file">⏎̸</span>}
+      {badges && <span className="badges">{badges}</span>}
     </td>
+  );
+});
+
+/** A note from an earlier commit, shown where a later commit changes the code it was about. */
+function CarriedNote({ note, followUp }: { note: ReviewNote; followUp: NoteFollowUp }) {
+  const { review, updateNote, jumpTo } = useSession();
+  const index = review.commits.filter((c) => !c.outdated).findIndex((c) => c.sha === note.commitSha);
+  const partial = followUp.changedLines < followUp.totalLines;
+  return (
+    <div className="carried-note">
+      <div className="note-head">
+        <span className="carried-label">↻ From commit {index + 1}</span>
+        <KindBadge kind={note.kind} />
+        <span className="muted small">
+          {partial ? `${followUp.changedLines} of ${followUp.totalLines} lines it covers change here` : 'the code it refers to changes here'} — addressed?
+        </span>
+        <span className="spacer" />
+        <button className="btn-link" onClick={() => updateNote(note.id, { resolved: true })}>
+          Resolve
+        </button>
+        <button
+          className="btn-link"
+          onClick={() => jumpTo({ commitKey: note.commitSha, path: note.filePath ?? null, side: note.side, line: note.endLine ?? note.line })}
+        >
+          View original
+        </button>
+      </div>
+      <div className="note-body">{note.body}</div>
+    </div>
   );
 }
 
 /** Notes attached to the whole file, or to lines not visible in the current diff. */
-function FileLevelNotes({ notes, viewId, commitKey, path }: { notes: ReviewNote[]; viewId: string; commitKey: string; path: string }) {
+function FileLevelNotes({
+  notes,
+  carried,
+  viewId,
+  commitKey,
+  path,
+}: {
+  notes: ReviewNote[];
+  carried: { followUp: NoteFollowUp; note: ReviewNote }[];
+  viewId: string;
+  commitKey: string;
+  path: string;
+}) {
   const { draft } = useSession();
   const fileNotes = notes.filter((n) => n.line == null);
   const lineNotes = notes.filter((n) => n.line != null);
   const showDraft = draft && draft.viewId === viewId && draft.commitKey === commitKey && draft.path === path && draft.line == null;
-  if (fileNotes.length === 0 && lineNotes.length === 0 && !showDraft) return null;
+  if (fileNotes.length === 0 && lineNotes.length === 0 && carried.length === 0 && !showDraft) return null;
   return (
     <div className="file-notes">
-      <NoteThread notes={fileNotes} draft={showDraft ? draft : null} />
+      {carried.map((c) => (
+        <CarriedNote key={c.note.id} note={c.note} followUp={c.followUp} />
+      ))}
+      {(fileNotes.length > 0 || showDraft) && <NoteThread notes={fileNotes} draft={showDraft ? draft : null} />}
       {lineNotes.length > 0 && (
         <div className="unplaced">
           <div className="muted small">Notes on lines outside the visible diff:</div>

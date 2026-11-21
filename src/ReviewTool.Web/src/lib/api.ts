@@ -5,6 +5,10 @@ import type {
   CreateReviewRequest,
   DiffSide,
   FileDiff,
+  FileHistoryEntry,
+  LaterChange,
+  MovedBlock,
+  NoteFollowUp,
   NoteInput,
   RepoInfo,
   RepoRefs,
@@ -69,9 +73,21 @@ export const api = {
   deleteReview: (id: string) => request<void>('DELETE', `/reviews/${enc(id)}`),
   refreshReview: (id: string) => request<Review>('POST', `/reviews/${enc(id)}/refresh`),
 
-  changedFiles: (id: string, commit: string) => request<ChangedFile[]>('GET', `/reviews/${enc(id)}/commits/${enc(commit)}/files`),
-  fileDiff: (id: string, commit: string, path: string, oldPath: string | null | undefined, context: number) =>
-    request<FileDiff>('GET', `/reviews/${enc(id)}/commits/${enc(commit)}/diff${q({ path, oldPath, context })}`),
+  changedFiles: (id: string, commit: string, ignoreWhitespace = false) =>
+    request<ChangedFile[]>('GET', `/reviews/${enc(id)}/commits/${enc(commit)}/files${q({ ignoreWhitespace: ignoreWhitespace || undefined })}`),
+  fileDiff: (id: string, commit: string, path: string, oldPath: string | null | undefined, context: number, ignoreWhitespace = false) =>
+    request<FileDiff>(
+      'GET',
+      `/reviews/${enc(id)}/commits/${enc(commit)}/diff${q({ path, oldPath, context, ignoreWhitespace: ignoreWhitespace || undefined })}`,
+    ),
+  moved: (id: string, commit: string, ignoreWhitespace = false) =>
+    request<MovedBlock[]>('GET', `/reviews/${enc(id)}/commits/${enc(commit)}/moved${q({ ignoreWhitespace: ignoreWhitespace || undefined })}`),
+  laterChanges: (id: string, commit: string, path: string) =>
+    request<LaterChange[]>('GET', `/reviews/${enc(id)}/commits/${enc(commit)}/later-changes${q({ path })}`),
+  followUps: (id: string) => request<NoteFollowUp[]>('GET', `/reviews/${enc(id)}/followups`),
+  fileHistory: (id: string, path: string) => request<FileHistoryEntry[]>('GET', `/reviews/${enc(id)}/file-history${q({ path })}`),
+  setLinesReviewed: (id: string, commit: string, path: string, ranges: string[], reviewed: boolean) =>
+    request<Review>('PUT', `/reviews/${enc(id)}/commits/${enc(commit)}/reviewed-lines`, { path, ranges, reviewed }),
   tree: (id: string, commit: string) => request<string[]>('GET', `/reviews/${enc(id)}/commits/${enc(commit)}/tree`),
   blob: (id: string, commit: string, path: string, side: DiffSide = 'New') =>
     request<BlobContent>('GET', `/reviews/${enc(id)}/commits/${enc(commit)}/blob${q({ path, side })}`),

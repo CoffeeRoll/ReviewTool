@@ -1,4 +1,6 @@
 export const RANGE = 'range';
+export const SINCE = 'since';
+export const isSpecialKey = (k: string) => k === RANGE || k === SINCE;
 
 export type ChangeKind = 'Modified' | 'Added' | 'Deleted' | 'Renamed' | 'Copied' | 'TypeChanged' | 'Unknown';
 export type DiffLineType = 'Context' | 'Add' | 'Delete';
@@ -34,6 +36,49 @@ export interface ChangedFile {
   deletions: number;
   isBinary: boolean;
   similarity: number | null;
+  isGenerated: boolean;
+}
+
+export interface MovedBlock {
+  fromPath: string;
+  fromStart: number;
+  fromEnd: number;
+  toPath: string;
+  toStart: number;
+  toEnd: number;
+}
+
+/** A line (new side of a commit) that a later commit changes; oldLine is its number in that commit's diff. */
+export interface LaterChange {
+  line: number;
+  commitSha: string;
+  oldLine: number;
+}
+
+export interface NoteFollowUp {
+  noteId: string;
+  commitSha: string;
+  path: string;
+  line: number;
+  endLine: number;
+  changedLines: number;
+  totalLines: number;
+}
+
+export interface FileHistoryEntry {
+  sha: string;
+  path: string;
+  oldPath: string | null;
+  status: ChangeKind;
+}
+
+export type CommitChange = 'Unchanged' | 'Modified' | 'New';
+
+export interface ReviewSnapshot {
+  headSha: string;
+  mergeBaseSha: string;
+  baseSha: string;
+  recordedAt: string;
 }
 
 export interface DiffLine {
@@ -111,6 +156,8 @@ export interface ReviewCommit {
   deletions: number;
   isMerge: boolean;
   outdated: boolean;
+  sinceLastReview?: CommitChange | null;
+  previousSha?: string | null;
 }
 
 export interface ReviewNote {
@@ -135,10 +182,12 @@ export interface PaneSpec {
   id: string;
   path: string;
   oldPath?: string | null;
-  /** 'diff' shows changes; 'file' shows the whole file at the commit. */
-  mode: 'diff' | 'file';
+  /** 'diff' shows changes; 'file' the whole file at the commit; 'history' steps through every commit touching the file. */
+  mode: 'diff' | 'file' | 'history';
   /** When set the pane stays on this commit instead of following the current one. */
   pinnedCommit?: string | null;
+  /** History mode: the commit currently selected on the file's timeline. */
+  historyCommit?: string | null;
 }
 
 export interface UiState {
@@ -152,6 +201,10 @@ export interface UiState {
   notesOpen?: boolean;
   currentFile?: string | null;
   sidebarWidth?: number;
+  ignoreWhitespace?: boolean;
+  fileTree?: boolean;
+  /** Mark (and dim) added lines that a later commit rewrites. */
+  showLater?: boolean;
 }
 
 export interface Review {
@@ -171,6 +224,9 @@ export interface Review {
   summary: string;
   commits: ReviewCommit[];
   reviewedFiles: Record<string, string[]>;
+  /** commit key → path → reviewed changed-line ranges ("N12-20", "O5"). */
+  reviewedLines?: Record<string, Record<string, string[]>> | null;
+  previousHead?: ReviewSnapshot | null;
   notes: ReviewNote[];
   uiState?: UiState | null;
 }

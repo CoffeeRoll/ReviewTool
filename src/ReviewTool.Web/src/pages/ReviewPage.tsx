@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { DiffStyleToggle, LayoutToggle, ThemeToggle } from '../components/Controls';
+import { DiffStyleToggle, LayoutToggle, ThemeToggle, ViewMenu } from '../components/Controls';
 import { FileBrowser, FinishDialog, ShortcutsDialog } from '../components/Dialogs';
 import { FileCard, Pane } from '../components/FileViews';
 import { CommitHeader, NotesPanel, neighbours } from '../components/Panels';
@@ -7,7 +7,7 @@ import { Sidebar } from '../components/Sidebar';
 import { api } from '../lib/api';
 import { overallProgress, shortSha } from '../lib/diff';
 import { SessionProvider, useSession } from '../lib/session';
-import { RANGE, REVIEW_STATUSES, type Review } from '../lib/types';
+import { RANGE, REVIEW_STATUSES, SINCE, type Review } from '../lib/types';
 
 export function ReviewPage({ id }: { id: string }) {
   const [review, setReview] = useState<Review | null>(null);
@@ -94,6 +94,9 @@ function ReviewWorkspace() {
         u: () => setUi({ diffStyle: ui.diffStyle === 'split' ? 'unified' : 'split' }),
         l: () => toggleLayout(),
         w: () => setUi({ wrap: !ui.wrap }),
+        i: () => setUi({ ignoreWhitespace: !ui.ignoreWhitespace }),
+        d: () => setUi({ showLater: !ui.showLater }),
+        s: () => review.previousHead && selectCommit(SINCE),
         o: () => setDialog('browse'),
         c: () => setDraft({ commitKey: ui.commitKey, path: null, side: 'New', line: null, endLine: null, viewId: 'commit' }),
         N: () => setUi({ notesOpen: !ui.notesOpen }),
@@ -258,16 +261,7 @@ function TopBar({ onFinish, onHelp, onToggleLayout }: { onFinish: () => void; on
       <span className="spacer" />
       <LayoutToggle value={ui.layout} onToggle={onToggleLayout} />
       <DiffStyleToggle value={ui.diffStyle} onChange={(v) => setUi({ diffStyle: v })} />
-      <select className="input small" value={ui.context} onChange={(e) => setUi({ context: Number(e.target.value) })} title="Context lines around changes">
-        {[3, 10, 25, 100].map((n) => (
-          <option key={n} value={n}>
-            {n} lines
-          </option>
-        ))}
-      </select>
-      <button className={`btn small ${ui.wrap ? 'active' : ''}`} onClick={() => setUi({ wrap: !ui.wrap })} title="Wrap long lines (w)">
-        Wrap
-      </button>
+      <ViewMenu />
       <button
         className="btn small"
         disabled={refreshing}

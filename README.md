@@ -27,9 +27,34 @@ specific lines. Your progress is saved, so you can stop and pick the review up a
     PR doesn't change, so you can see the surrounding code.
 - **Saved and resumable.** Reviewed files, notes, the current commit, open panes and view settings
   are all saved. Reopen a review and you're back where you left off.
-- **Handles force pushes.** **Refresh** re-reads the branches. Unchanged commits keep their
-  reviewed state. Commits that were rewritten but have notes are kept and marked *outdated*, so no
-  notes are lost.
+- **Handles force pushes and rebases.** **Refresh** re-reads the branches and compares the new commits
+  with the ones you already reviewed (using `git patch-id`):
+  - Commits with the same changes (e.g. only rebased) keep their reviewed state and notes, and are
+    tagged *rebased*.
+  - Rewritten commits are tagged *changed* and new ones *new*.
+  - A **Since your last review** view shows only what changed between the old head and the new one,
+    limited to files the PR touches, so changes that came in from the base branch are left out.
+  - Notes move to the new commit when the code they point at can still be found. Otherwise they stay
+    on the old commit, which is kept and marked *outdated*, so no notes are lost.
+- **Built for going commit by commit.**
+  - **↻ Changes again later:** lines added in one commit that a later commit rewrites are marked
+    *↻ n* (with n the later commit's number) and dimmed, so you don't pick apart code that gets
+    replaced anyway. Click the marker to jump to that later change. This uses `git blame --reverse`.
+  - **Notes follow the code:** if a later commit changes the lines a note is about, the note shows up
+    again in that commit, marked *possibly addressed?*, with Resolve and *View original* buttons.
+  - **File history pane:** a pane in *History* mode steps through every commit in the review that
+    touches a file (following renames).
+  - **Hunk-level progress:** tick *Hunk reviewed* to check off part of a big file; reviewed hunks
+    fold away, and the file is marked reviewed once every hunk is.
+- **Easier diff reading.**
+  - The changed words within a line are highlighted.
+  - **Hide whitespace changes** (<kbd>i</kbd>) uses git's `-w` option.
+  - **Moved code** is shown in purple with *moved to* / *moved from* links, even across files and
+    when re-indented.
+  - **Generated files** start collapsed: lockfiles, `*.Designer.cs`, `*.g.cs`, minified files, EF
+    migration snapshots, and anything marked `linguist-generated` in `.gitattributes`.
+  - The file list can show a **folder tree** or a flat list.
+  - Very large diffs render in chunks so the page stays responsive.
 - **Pull requests by number.** Enter a PR number and ReviewTool fetches its head
   (`pull/N/head` for GitHub/Gitea, `merge-requests/N/head` for GitLab) with your normal git
   credentials.
@@ -69,6 +94,9 @@ scripts/create-demo-repo.sh /tmp/reviewtool-demo   # then review main ← featur
 | <kbd>Shift</kbd>+<kbd>M</kbd> | Mark the commit reviewed and go to the next one |
 | <kbd>a</kbd> | Combined "all changes" diff |
 | <kbd>u</kbd> / <kbd>l</kbd> / <kbd>w</kbd> | Toggle unified/split, stacked/panes, line wrap |
+| <kbd>i</kbd> | Hide / show whitespace-only changes |
+| <kbd>d</kbd> | Dim lines that a later commit rewrites |
+| <kbd>s</kbd> | Changes since your last review |
 | <kbd>o</kbd> | Open any file from the repo |
 | <kbd>c</kbd> | Note on the current commit |
 | <kbd>Shift</kbd>+<kbd>N</kbd> | Notes panel |
@@ -146,15 +174,18 @@ implementation (e.g. a database) in place of the JSON file store.
 | `GET/POST /api/reviews` | List / create reviews (`{ repoPath, baseRef, headRef, name?, pullRequest? }`) |
 | `GET/PATCH/DELETE /api/reviews/{id}` | Read / update (name, summary, status, uiState) / delete |
 | `POST /api/reviews/{id}/refresh` | Re-read branches (re-fetches the PR) |
-| `GET /api/reviews/{id}/commits/{sha\|range}/files` | Changed files |
-| `GET /api/reviews/{id}/commits/{sha\|range}/diff?path=&oldPath=&context=` | One file's diff (`context=-1` for the whole file) |
+| `GET /api/reviews/{id}/commits/{sha\|range\|since}/files?ignoreWhitespace=` | Changed files (`range` = combined diff, `since` = since your last review) |
+| `GET /api/reviews/{id}/commits/{sha\|range\|since}/diff?path=&oldPath=&context=&ignoreWhitespace=` | One file's diff (`context=-1` for the whole file) |
 | `GET /api/reviews/{id}/commits/{sha\|range}/tree` · `.../blob?path=&side=` | Browse files |
 | `PUT /api/reviews/{id}/commits/{sha\|range}/reviewed` | `{ paths: [], reviewed: bool }` |
+| `PUT /api/reviews/{id}/commits/{sha\|range}/reviewed-lines` | `{ path, ranges: ["N12-20", "O5"], reviewed }` (hunk progress) |
+| `GET /api/reviews/{id}/commits/{sha\|range}/moved` | Moved-code blocks |
+| `GET /api/reviews/{id}/commits/{sha}/later-changes?path=` | Lines a later commit rewrites |
+| `GET /api/reviews/{id}/followups` · `GET /api/reviews/{id}/file-history?path=` | Notes to revisit · a file's commits |
 | `POST /api/reviews/{id}/notes` · `PATCH/DELETE .../notes/{noteId}` | Notes |
 | `GET /api/reviews/{id}/export.md` | Markdown export |
 
 ## Ideas for later
 
 - Post notes as review comments on GitHub/Azure DevOps through their APIs
-- "Changes since I last looked" view after a force push (range-diff)
 - Desktop wrapper (e.g. Photino or Electron) around the same web UI

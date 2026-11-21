@@ -40,7 +40,8 @@ public sealed record ChangedFile(
     int Additions,
     int Deletions,
     bool IsBinary,
-    int? Similarity = null);
+    int? Similarity = null,
+    bool IsGenerated = false);
 
 public sealed record DiffLine(DiffLineType Type, int? OldLine, int? NewLine, string Text, bool NoNewlineAtEnd = false);
 
@@ -65,3 +66,18 @@ public sealed record RepoRefs(string? CurrentBranch, string? DefaultBranch, IRea
 public sealed record RepoInfo(string Path, string? CurrentBranch, IReadOnlyList<string> Remotes);
 
 public sealed record BlobContent(string Path, string Sha, bool IsBinary, bool Truncated, long Size, string? Text);
+
+/// <summary>One line of <c>git blame --reverse</c>: where a line of the starting version was last seen.</summary>
+/// <param name="Line">Line number in the starting version.</param>
+/// <param name="LastSeenSha">Last commit in which the line still existed unchanged.</param>
+/// <param name="LastSeenLine">The line's number in <paramref name="LastSeenSha"/>'s version of the file.</param>
+public sealed record ReverseBlameLine(int Line, string LastSeenSha, int LastSeenLine);
+
+/// <summary>A block of lines deleted in one place and added (identically, ignoring indentation) somewhere else.</summary>
+public sealed record MovedBlock(string FromPath, int FromStart, int FromEnd, string ToPath, int ToStart, int ToEnd)
+{
+    public int LineCount => FromEnd - FromStart + 1;
+}
+
+/// <summary>A commit (in a range) that touches a file, with the file's path in that commit.</summary>
+public sealed record FileHistoryEntry(string Sha, string Path, string? OldPath, ChangeKind Status);

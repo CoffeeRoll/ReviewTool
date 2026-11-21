@@ -168,14 +168,40 @@ public sealed class GitRepository
     }
 
     /// <summary>Files changed between two trees, with rename detection and line counts.</summary>
-    public async Task<List<ChangedFile>> GetChangedFilesAsync(string from, string to, CancellationToken ct = default)
+    public async Task<List<ChangedFile>> GetChangedFilesAsync(string from, string to, CancellationToken ct = default, bool ignoreWhitespace = false)
     {
         from = ValidateRev(from);
         to = ValidateRev(to);
+        var ws = ignoreWhitespace ? "-w" : "--no-color";
         var nameStatusTask = Run(ct, "diff", "--no-ext-diff", "--no-textconv", "-M", "--name-status", "-z", from, to, "--");
-        var numstatTask = Run(ct, "diff", "--no-ext-diff", "--no-textconv", "-M", "--numstat", "-z", from, to, "--");
+        var numstatTask = Run(ct, "diff", "--no-ext-diff", "--no-textconv", "-M", ws, "--numstat", "-z", from, to, "--");
         await Task.WhenAll(nameStatusTask, numstatTask);
-        return MergeStatus(ParseNameStatus(await nameStatusTask), ParseNumstat(await numstatTask));
+        var files = MergeStatus(ParseNameStatus(await nameStatusTask), ParseNumstat(await numstatTask));
+        var generated = await GetGeneratedPathsAsync(to, files.Select(f => f.Path).ToList(), ct);
+        return files.Select(f => generated.Contains(f.Path) ? f with { IsGenerated = true } : f).ToList();
+    }
+
+    /// <summary>
+    /// Paths that are generated: either matching well-known patterns (lockfiles, *.Designer.cs, ...)
+    /// or marked <c>linguist-generated</c> in .gitattributes.
+    /// </summary>
+    public async Task<HashSet<string>> GetGeneratedPathsAsync(string rev, IReadOnlyCollection<string> paths, CancellationToken ct = default)
+    {
+        var result = paths.Where(GeneratedFiles.MatchesKnownPattern).ToHashSet(StringComparer.Ordinal);
+        if (paths.Count == 0) return result;
+        var input = string.Join('\0', paths) + "\0";
+        // --source reads .gitattributes from the commit itself (git 2.40+); fall back to the working tree.
+        var r = await _git.RunAsync(Path, ["check-attr", "-z", "--stdin", "--source", ValidateRev(rev), "linguist-generated"], ct, input);
+        if (!r.Success) r = await _git.RunAsync(Path, ["check-attr", "-z", "--stdin", "linguist-generated"], ct, input);
+        if (!r.Success) return result;
+        var tokens = r.StdOut.Split('\0');
+        for (var i = 0; i + 2 < tokens.Length; i += 3)
+        {
+            var value = tokens[i + 2];
+            if (value is "set" or "true") result.Add(tokens[i]);
+            else if (value is "unset" or "false") result.Remove(tokens[i]);
+        }
+        return result;
     }
 
     internal static List<(char Status, int? Similarity, string? OldPath, string Path)> ParseNameStatus(string output)
@@ -254,20 +280,101 @@ public sealed class GitRepository
     }
 
     /// <summary>Unified diff for a single file between two trees.</summary>
-    public async Task<FileDiff> GetFileDiffAsync(string from, string to, string path, string? oldPath, int contextLines = 3, int maxLines = 20_000, CancellationToken ct = default)
+    public async Task<FileDiff> GetFileDiffAsync(string from, string to, string path, string? oldPath, int contextLines = 3, int maxLines = 20_000, CancellationToken ct = default, bool ignoreWhitespace = false)
     {
         var args = new List<string>
         {
             "diff", "--no-ext-diff", "--no-textconv", "-M", "--no-color",
             "--src-prefix=a/", "--dst-prefix=b/",
             $"-U{Math.Clamp(contextLines, 0, FullContext)}",
-            ValidateRev(from), ValidateRev(to), "--", ValidatePath(path),
         };
+        if (ignoreWhitespace) args.Add("-w");
+        args.AddRange([ValidateRev(from), ValidateRev(to), "--", ValidatePath(path)]);
         if (!string.IsNullOrEmpty(oldPath) && oldPath != path) args.Add(ValidatePath(oldPath));
         var output = await _git.RunCheckedAsync(Path, args, ct);
         var parsed = DiffParser.Parse(output, maxLines);
         var match = parsed.FirstOrDefault(f => f.Path == path) ?? parsed.FirstOrDefault();
         return match ?? new FileDiff(path, oldPath, ChangeKind.Modified, false, null, null, []);
+    }
+
+    /// <summary>Whole diff between two trees with no context lines (used for moved-code detection).</summary>
+    public async Task<List<FileDiff>> GetZeroContextDiffAsync(string from, string to, bool ignoreWhitespace, CancellationToken ct = default)
+    {
+        var args = new List<string> { "diff", "--no-ext-diff", "--no-textconv", "-M", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "-U0" };
+        if (ignoreWhitespace) args.Add("-w");
+        args.AddRange([ValidateRev(from), ValidateRev(to), "--"]);
+        return DiffParser.Parse(await _git.RunCheckedAsync(Path, args, ct), maxLinesPerFile: 20_000);
+    }
+
+    /// <summary>
+    /// For each line of <paramref name="path"/> at <paramref name="from"/>, the last commit up to
+    /// <paramref name="to"/> where it still existed (<c>git blame --reverse</c>).
+    /// </summary>
+    public async Task<List<ReverseBlameLine>> ReverseBlameAsync(string from, string to, string path, CancellationToken ct = default)
+    {
+        var output = await Run(ct, "blame", "--reverse", "--porcelain", $"{ValidateRev(from)}..{ValidateRev(to)}", "--", ValidatePath(path));
+        return ParseReverseBlame(output);
+    }
+
+    internal static List<ReverseBlameLine> ParseReverseBlame(string porcelain)
+    {
+        var result = new List<ReverseBlameLine>();
+        foreach (var line in porcelain.Split('\n'))
+        {
+            // Header lines look like "<sha> <line in sha's version> <line in starting version> [<group size>]".
+            if (line.Length < 44 || line[0] == '\t') continue;
+            var parts = line.Split(' ');
+            if (parts.Length < 3 || parts[0].Length < 40 || !parts[0].All(Uri.IsHexDigit)) continue;
+            if (!int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var orig)) continue;
+            if (!int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out var final)) continue;
+            result.Add(new ReverseBlameLine(final, parts[0], orig));
+        }
+        return result;
+    }
+
+    /// <summary>Commits in <c>base..head</c> that change <paramref name="path"/> (following renames), oldest first.</summary>
+    public async Task<List<FileHistoryEntry>> GetFileHistoryAsync(string baseRev, string head, string path, CancellationToken ct = default)
+    {
+        var output = await Run(ct, "log", "--follow", "-M", "--format=%x1e%H", "--name-status", "-z",
+            "--end-of-options", $"{ValidateRev(baseRev)}..{ValidateRev(head)}", "--", ValidatePath(path));
+        var entries = new List<FileHistoryEntry>();
+        foreach (var record in output.Split('\x1e', StringSplitOptions.RemoveEmptyEntries))
+        {
+            // Each record is "<sha>\0\n<status>\0<path>[\0<new path>]\0".
+            var tokens = record.Split('\0').Select(t => t.Trim('\n')).ToList();
+            var sha = tokens[0];
+            if (sha.Length < 40) continue;
+            var rest = tokens.Skip(1).Where(t => t.Length > 0);
+            var status = ParseNameStatus(string.Join('\0', rest.Where(t => t.Length > 0)) + "\0").FirstOrDefault();
+            if (status == default) continue;
+            var kind = status.Status switch
+            {
+                'A' => ChangeKind.Added,
+                'D' => ChangeKind.Deleted,
+                'R' => ChangeKind.Renamed,
+                'C' => ChangeKind.Copied,
+                'T' => ChangeKind.TypeChanged,
+                _ => ChangeKind.Modified,
+            };
+            entries.Add(new FileHistoryEntry(sha, status.Path, status.OldPath, kind));
+        }
+        entries.Reverse();
+        return entries;
+    }
+
+    /// <summary>Stable patch ids for each non-merge commit in <c>base..head</c>, keyed by commit SHA.</summary>
+    public async Task<Dictionary<string, string>> GetPatchIdsAsync(string baseRev, string head, CancellationToken ct = default)
+    {
+        var patches = await Run(ct, "log", "-p", "--no-color", "--no-ext-diff", "--format=commit %H",
+            "--end-of-options", $"{ValidateRev(baseRev)}..{ValidateRev(head)}");
+        var ids = await _git.RunCheckedAsync(Path, ["patch-id", "--stable"], ct, patches);
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var line in ids.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = line.Split(' ');
+            if (parts.Length == 2) result[parts[1]] = parts[0];
+        }
+        return result;
     }
 
     public async Task<List<string>> ListTreeAsync(string rev, CancellationToken ct = default)

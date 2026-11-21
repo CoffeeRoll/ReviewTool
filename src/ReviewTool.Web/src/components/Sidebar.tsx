@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { basename, commitProgress, dirname, shortSha } from '../lib/diff';
 import { useSession } from '../lib/session';
-import { RANGE, type ChangedFile, type ReviewCommit } from '../lib/types';
+import { buildTree, filesUnder, type TreeNode } from '../lib/tree';
+import { RANGE, SINCE, type ChangedFile, type ReviewCommit } from '../lib/types';
 import { StatusBadge } from './FileViews';
 
 export function ProgressRing({ value, total, size = 16 }: { value: number; total: number; size?: number }) {
@@ -69,17 +70,31 @@ export function Sidebar({ onBrowse }: { onBrowse: () => void }) {
   );
 }
 
+const CHANGE_BADGE: Record<string, { label: string; title: string } | undefined> = {
+  New: { label: 'new', title: 'Added since your last review' },
+  Modified: { label: 'changed', title: 'Rewritten since your last review — re-check it' },
+};
+
 function CommitList({ commits }: { commits: ReviewCommit[] }) {
   const { review, ui, selectCommit, files, loadFiles } = useSession();
   const active = commits.filter((c) => !c.outdated);
   const outdated = commits.filter((c) => c.outdated);
   const rangeTotal = files(RANGE)?.length;
   const rangeReviewed = Math.min(review.reviewedFiles[RANGE]?.length ?? 0, rangeTotal ?? 0);
+  const sinceTotal = files(SINCE)?.length;
+  const sinceReviewed = Math.min(review.reviewedFiles[SINCE]?.length ?? 0, sinceTotal ?? 0);
   const listRef = useRef<HTMLOListElement>(null);
+  const prev = review.previousHead;
+  const counts = useMemo(() => {
+    const c = { New: 0, Modified: 0 };
+    for (const x of active) if (x.sinceLastReview === 'New' || x.sinceLastReview === 'Modified') c[x.sinceLastReview]++;
+    return c;
+  }, [active]);
 
   useEffect(() => {
     loadFiles(RANGE).catch(() => undefined);
-  }, [loadFiles]);
+    if (prev) loadFiles(SINCE).catch(() => undefined);
+  }, [loadFiles, prev]);
 
   useEffect(() => {
     listRef.current?.querySelector('.commit.selected')?.scrollIntoView({ block: 'nearest' });
@@ -88,16 +103,30 @@ function CommitList({ commits }: { commits: ReviewCommit[] }) {
   const item = (c: ReviewCommit, index: number | null) => {
     const p = commitProgress(review.reviewedFiles, c.sha, c.fileCount);
     const notes = review.notes.filter((n) => n.commitSha === c.sha).length;
+    const badge = c.sinceLastReview ? CHANGE_BADGE[c.sinceLastReview] : undefined;
+    const rebased = c.sinceLastReview === 'Unchanged' && c.previousSha && c.previousSha !== c.sha;
     return (
       <li key={c.sha}>
         <button className={`commit ${ui.commitKey === c.sha ? 'selected' : ''} ${p.done ? 'done' : ''}`} onClick={() => selectCommit(c.sha)}>
           <span className="commit-index">{index ?? '–'}</span>
           <ProgressRing value={p.reviewed} total={p.total} />
           <span className="commit-main">
-            <span className="commit-subject">{c.subject || '(no message)'}</span>
+            <span className="commit-subject">
+              {badge && (
+                <span className={`change-badge change-${c.sinceLastReview!.toLowerCase()}`} title={badge.title}>
+                  {badge.label}
+                </span>
+              )}
+              {c.subject || '(no message)'}
+            </span>
             <span className="commit-meta muted">
               <span className="mono">{shortSha(c.sha)}</span> · {c.authorName}
               {c.isMerge && <span className="pill">merge</span>}
+              {rebased && (
+                <span className="pill" title={`Same changes as ${shortSha(c.previousSha!)} (rebased) — your progress carried over`}>
+                  rebased
+                </span>
+              )}
             </span>
           </span>
           <span className="commit-side">
@@ -117,6 +146,23 @@ function CommitList({ commits }: { commits: ReviewCommit[] }) {
         Commits <span className="muted">({active.length})</span>
       </div>
       <ol className="commit-list" ref={listRef}>
+        {prev && (
+          <li>
+            <button className={`commit since ${ui.commitKey === SINCE ? 'selected' : ''}`} onClick={() => selectCommit(SINCE)}>
+              <span className="commit-index">Δ</span>
+              <ProgressRing value={sinceReviewed} total={sinceTotal ?? 1} />
+              <span className="commit-main">
+                <span className="commit-subject">Since your last review</span>
+                <span className="commit-meta muted">
+                  {counts.New} new · {counts.Modified} changed ·{' '}
+                  <span className="mono">
+                    {shortSha(prev.headSha)}..{shortSha(review.headSha)}
+                  </span>
+                </span>
+              </span>
+            </button>
+          </li>
+        )}
         <li>
           <button className={`commit range ${ui.commitKey === RANGE ? 'selected' : ''}`} onClick={() => selectCommit(RANGE)}>
             <span className="commit-index">∑</span>
@@ -140,6 +186,7 @@ function CommitList({ commits }: { commits: ReviewCommit[] }) {
 function FileList({ onBrowse }: { onBrowse: () => void }) {
   const { review, ui, setUi, files, loadFiles, isReviewed, setReviewed, openPane, setError } = useSession();
   const [filter, setFilter] = useState('');
+  const [closed, setClosed] = useState<Set<string>>(new Set());
   const key = ui.commitKey;
   const list = files(key);
 
@@ -151,6 +198,7 @@ function FileList({ onBrowse }: { onBrowse: () => void }) {
     const f = filter.trim().toLowerCase();
     return (list ?? []).filter((x) => !f || x.path.toLowerCase().includes(f));
   }, [list, filter]);
+  const tree = useMemo(() => buildTree(shown), [shown]);
 
   const noteCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -172,14 +220,99 @@ function FileList({ onBrowse }: { onBrowse: () => void }) {
     });
   };
 
+  const row = (f: ChangedFile, depth: number, showDir: boolean) => {
+    const reviewed = isReviewed(key, f.path);
+    const notes = noteCounts.get(f.path);
+    const openInPane = ui.layout === 'panes' && ui.panes.some((p) => p.path === f.path);
+    return (
+      <li key={f.path}>
+        <div
+          className={`file-item ${ui.currentFile === f.path ? 'current' : ''} ${reviewed ? 'reviewed' : ''} ${f.isGenerated ? 'generated' : ''}`}
+          style={{ paddingLeft: 6 + depth * 14 }}
+          onClick={(e) => open(f, e.ctrlKey || e.metaKey || e.shiftKey)}
+          title={`${f.oldPath ? `${f.oldPath} → ` : ''}${f.path}${f.isGenerated ? '\nGenerated file' : ''}\nCtrl/Shift+click: open in a new pane`}
+        >
+          <input
+            type="checkbox"
+            checked={reviewed}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => setReviewed(key, [f.path], e.target.checked)}
+            aria-label={`Mark ${f.path} reviewed`}
+          />
+          <StatusBadge status={f.status} />
+          <span className="file-name">
+            <span className="base">{basename(f.path)}</span>
+            {showDir && <span className="dir muted">{dirname(f.path)}</span>}
+          </span>
+          {f.isGenerated && <span className="pill">gen</span>}
+          {openInPane && (
+            <span className="pill" title="Open in a pane">
+              ⧉
+            </span>
+          )}
+          {notes && <span className="pill">💬 {notes}</span>}
+          <span className="stat small">
+            <span className="add">+{f.additions}</span> <span className="del">−{f.deletions}</span>
+          </span>
+          <button
+            className="icon-btn hover-only"
+            title="Open in a new pane"
+            onClick={(e) => {
+              e.stopPropagation();
+              open(f, true);
+            }}
+          >
+            ⧉
+          </button>
+        </div>
+      </li>
+    );
+  };
+
+  const folder = (node: TreeNode, depth: number): ReactNode => {
+    if (node.file) return row(node.file, depth, false);
+    const isClosed = closed.has(node.path);
+    const under = filesUnder(node);
+    const done = under.filter((f) => isReviewed(key, f.path)).length;
+    return (
+      <li key={`dir:${node.path}`}>
+        <div
+          className="folder-item"
+          style={{ paddingLeft: 6 + depth * 14 }}
+          onClick={() =>
+            setClosed((s) => {
+              const n = new Set(s);
+              if (n.has(node.path)) n.delete(node.path);
+              else n.add(node.path);
+              return n;
+            })
+          }
+          title={node.path}
+        >
+          <span className="chevron">{isClosed ? '▸' : '▾'}</span>
+          <span className="folder-name">{node.name}/</span>
+          <span className={`small ${done === under.length ? 'add' : 'muted'}`}>
+            {done}/{under.length}
+          </span>
+        </div>
+        {!isClosed && <ul className="file-list nested">{node.children.map((c) => folder(c, depth + 1))}</ul>}
+      </li>
+    );
+  };
+
   return (
     <div className="sidebar-section files">
       <div className="section-title">
-        Files{' '}
-        <span className="muted">
-          {list ? `${reviewedCount}/${list.length} reviewed` : '…'}
-        </span>
+        Files <span className="muted">{list ? `${reviewedCount}/${list.length} reviewed` : '…'}</span>
         <span className="spacer" />
+        <div className="seg mini" title="Show files as a folder tree or a flat list">
+          <button className={ui.fileTree ? 'on' : ''} onClick={() => setUi({ fileTree: true })}>
+            Tree
+          </button>
+          <button className={!ui.fileTree ? 'on' : ''} onClick={() => setUi({ fileTree: false })}>
+            List
+          </button>
+        </div>
         <button className="btn-link" title="Open any file from the repository at this commit (o)" onClick={onBrowse}>
           Browse…
         </button>
@@ -187,60 +320,15 @@ function FileList({ onBrowse }: { onBrowse: () => void }) {
       <div className="file-tools">
         <input className="input small" placeholder="Filter files…" value={filter} onChange={(e) => setFilter(e.target.value)} />
         {list && list.length > 0 && (
-          <button
-            className="btn small"
-            title="Mark every file in this commit as reviewed"
-            onClick={() => setReviewed(key, list.map((f) => f.path), !allReviewed)}
-          >
+          <button className="btn small" title="Mark every file in this commit as reviewed" onClick={() => setReviewed(key, list.map((f) => f.path), !allReviewed)}>
             {allReviewed ? 'Unmark all' : 'Mark all'}
           </button>
         )}
       </div>
       <ul className="file-list">
         {!list && <li className="muted small pad">Loading…</li>}
-        {list && list.length === 0 && <li className="muted small pad">This commit has no file changes.</li>}
-        {shown.map((f) => {
-          const reviewed = isReviewed(key, f.path);
-          const notes = noteCounts.get(f.path);
-          const openInPane = ui.layout === 'panes' && ui.panes.some((p) => p.path === f.path);
-          return (
-            <li key={f.path}>
-              <div
-                className={`file-item ${ui.currentFile === f.path ? 'current' : ''} ${reviewed ? 'reviewed' : ''}`}
-                onClick={(e) => open(f, e.ctrlKey || e.metaKey || e.shiftKey)}
-                title={`${f.oldPath ? `${f.oldPath} → ` : ''}${f.path}\nCtrl/Shift+click: open in a new pane`}
-              >
-                <input
-                  type="checkbox"
-                  checked={reviewed}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => setReviewed(key, [f.path], e.target.checked)}
-                  aria-label={`Mark ${f.path} reviewed`}
-                />
-                <StatusBadge status={f.status} />
-                <span className="file-name">
-                  <span className="base">{basename(f.path)}</span>
-                  <span className="dir muted">{dirname(f.path)}</span>
-                </span>
-                {openInPane && <span className="pill" title="Open in a pane">⧉</span>}
-                {notes && <span className="pill">💬 {notes}</span>}
-                <span className="stat small">
-                  <span className="add">+{f.additions}</span> <span className="del">−{f.deletions}</span>
-                </span>
-                <button
-                  className="icon-btn hover-only"
-                  title="Open in a new pane"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    open(f, true);
-                  }}
-                >
-                  ⧉
-                </button>
-              </div>
-            </li>
-          );
-        })}
+        {list && list.length === 0 && <li className="muted small pad">No file changes here.</li>}
+        {ui.fileTree ? tree.map((n) => folder(n, 0)) : shown.map((f) => row(f, 0, true))}
       </ul>
     </div>
   );

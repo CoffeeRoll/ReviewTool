@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { basename, dirname, shortSha } from '../lib/diff';
 import { notesFor, useSession } from '../lib/session';
-import { RANGE, type BlobContent, type ChangedFile, type ChangeKind, type FileDiff, type PaneSpec } from '../lib/types';
+import { RANGE, SINCE, isSpecialKey, type BlobContent, type ChangedFile, type ChangeKind, type FileDiff, type FileHistoryEntry, type PaneSpec } from '../lib/types';
 import { DiffView, fileAsDiff } from './DiffView';
 
 export function StatusBadge({ status }: { status: ChangeKind }) {
@@ -65,9 +65,21 @@ function useBlob(commitKey: string, path: string, enabled = true) {
 
 /** One changed file in the stacked (GitHub-style) layout. Loads its diff lazily when scrolled near. */
 export function FileCard({ commitKey, file }: { commitKey: string; file: ChangedFile }) {
-  const { review, isReviewed, setReviewed, setDraft, openPane, setUi, jump } = useSession();
+  const { review, isReviewed, setReviewed, setDraft, openPane, setUi, jump, getLaterChanges, reviewedLines } = useSession();
   const reviewed = isReviewed(commitKey, file.path);
-  const [collapsed, setCollapsed] = useState(reviewed);
+  // Reviewed and generated files start collapsed.
+  const [collapsed, setCollapsed] = useState(reviewed || file.isGenerated);
+  const [laterCount, setLaterCount] = useState(0);
+  const partial = !reviewed && (reviewedLines(commitKey, file.path)?.length ?? 0) > 0;
+
+  useEffect(() => {
+    if (isSpecialKey(commitKey) || file.status === 'Deleted' || file.isBinary) return;
+    let cancelled = false;
+    getLaterChanges(commitKey, file.path).then((l) => !cancelled && setLaterCount(l.length));
+    return () => {
+      cancelled = true;
+    };
+  }, [commitKey, file.path, file.status, file.isBinary, getLaterChanges]);
   const [visible, setVisible] = useState(false);
   const [full, setFull] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -112,6 +124,17 @@ export function FileCard({ commitKey, file }: { commitKey: string; file: Changed
           <span className="add">+{file.additions}</span> <span className="del">−{file.deletions}</span>
         </span>
         {noteCount > 0 && <span className="pill">{noteCount} note{noteCount === 1 ? '' : 's'}</span>}
+        {file.isGenerated && (
+          <span className="pill" title="Generated file (lockfile, designer file or marked linguist-generated) — collapsed by default">
+            generated
+          </span>
+        )}
+        {partial && <span className="pill">partly reviewed</span>}
+        {laterCount > 0 && (
+          <span className="pill later-pill" title="Lines of this file (as of this commit) that a later commit in this review changes again — added lines are marked ↻ in the diff">
+            ↻ {laterCount} line{laterCount === 1 ? '' : 's'} change later
+          </span>
+        )}
         <span className="spacer" />
         <button
           className="btn small"
@@ -170,18 +193,47 @@ export function FileContentView({ viewId, commitKey, path }: { viewId: string; c
 
 /** One column in the multi-pane layout. */
 export function Pane({ pane, active, canClose }: { pane: PaneSpec; active: boolean; canClose: boolean }) {
-  const { ui, setUi, files, loadFiles, isReviewed, setReviewed, setDraft } = useSession();
-  const commitKey = pane.pinnedCommit ?? ui.commitKey;
-  const changed = files(commitKey);
+  const { review, ui, setUi, files, loadFiles, isReviewed, setReviewed, setDraft } = useSession();
   const [full, setFull] = useState(false);
+  const [history, setHistory] = useState<FileHistoryEntry[] | null>(null);
+  const isHistory = pane.mode === 'history';
+
+  useEffect(() => {
+    if (!isHistory) return;
+    let cancelled = false;
+    setHistory(null);
+    api.fileHistory(review.id, pane.path).then(
+      (h) => !cancelled && setHistory(h),
+      () => !cancelled && setHistory([]),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [isHistory, review.id, pane.path, review.headSha]);
+
+  // In history mode, pick the selected step, else the latest change at or before the current commit.
+  const order = useMemo(() => new Map(review.commits.filter((c) => !c.outdated).map((c, i) => [c.sha, i])), [review.commits]);
+  const step = useMemo(() => {
+    if (!isHistory || !history || history.length === 0) return null;
+    const chosen = history.find((h) => h.sha === pane.historyCommit);
+    if (chosen) return chosen;
+    const current = order.get(ui.commitKey) ?? Number.MAX_SAFE_INTEGER;
+    return [...history].reverse().find((h) => (order.get(h.sha) ?? 0) <= current) ?? history[0];
+  }, [isHistory, history, pane.historyCommit, order, ui.commitKey]);
+  const stepIndex = step && history ? history.indexOf(step) : -1;
+
+  const commitKey = isHistory ? (step?.sha ?? ui.commitKey) : (pane.pinnedCommit ?? ui.commitKey);
+  const viewPath = isHistory && step ? step.path : pane.path;
+  const changed = files(commitKey);
 
   useEffect(() => {
     loadFiles(commitKey).catch(() => undefined);
   }, [commitKey, loadFiles]);
 
-  const file = changed?.find((f) => f.path === pane.path);
+  const file = changed?.find((f) => f.path === viewPath);
+  const showsDiff = pane.mode === 'diff' || (isHistory && !!step);
   const effectiveMode = pane.mode === 'diff' && changed && !file ? 'missing' : pane.mode;
-  const { diff, error, loading } = useFileDiff(commitKey, pane.path, file?.oldPath ?? pane.oldPath, full, pane.mode === 'diff' && !!file);
+  const { diff, error, loading } = useFileDiff(commitKey, viewPath, file?.oldPath ?? (isHistory ? step?.oldPath : pane.oldPath), full, showsDiff && !!file);
 
   const update = (patch: Partial<PaneSpec>) =>
     setUi((u) => ({ panes: u.panes.map((p) => (p.id === pane.id ? { ...p, ...patch } : p)) }));
@@ -191,13 +243,15 @@ export function Pane({ pane, active, canClose }: { pane: PaneSpec; active: boole
       return { panes, activePane: u.activePane === pane.id ? panes[0]?.id : u.activePane, layout: panes.length ? u.layout : 'stack' };
     });
 
-  const commitLabel = commitKey === RANGE ? 'All changes' : shortSha(commitKey);
+  const commitLabel = commitKey === RANGE ? 'All changes' : commitKey === SINCE ? 'Since last review' : shortSha(commitKey);
   const reviewed = file ? isReviewed(commitKey, file.path) : false;
   const options = useMemo(() => {
-    const list = (changed ?? []).map((f) => f.path);
+    const list = (files(ui.commitKey) ?? changed ?? []).map((f) => f.path);
     if (!list.includes(pane.path)) list.unshift(pane.path);
     return list;
-  }, [changed, pane.path]);
+  }, [files, ui.commitKey, changed, pane.path]);
+
+  const stepCommit = step ? review.commits.find((c) => c.sha === step.sha) : null;
 
   return (
     <section className={`pane ${active ? 'active' : ''}`} onMouseDown={() => !active && setUi({ activePane: pane.id, currentFile: pane.path })}>
@@ -207,7 +261,7 @@ export function Pane({ pane, active, canClose }: { pane: PaneSpec; active: boole
           value={pane.path}
           onChange={(e) => {
             const f = changed?.find((c) => c.path === e.target.value);
-            update({ path: e.target.value, oldPath: f?.oldPath ?? null });
+            update({ path: e.target.value, oldPath: f?.oldPath ?? null, historyCommit: null });
             setUi({ currentFile: e.target.value });
           }}
         >
@@ -218,32 +272,83 @@ export function Pane({ pane, active, canClose }: { pane: PaneSpec; active: boole
           ))}
         </select>
         <div className="seg">
-          <button className={pane.mode === 'diff' ? 'on' : ''} onClick={() => update({ mode: 'diff' })}>
+          <button className={pane.mode === 'diff' ? 'on' : ''} onClick={() => update({ mode: 'diff' })} title="Changes in the current commit">
             Diff
           </button>
-          <button className={pane.mode === 'file' ? 'on' : ''} onClick={() => update({ mode: 'file' })}>
+          <button className={pane.mode === 'file' ? 'on' : ''} onClick={() => update({ mode: 'file' })} title="The whole file at this commit">
             File
           </button>
+          <button
+            className={isHistory ? 'on' : ''}
+            onClick={() => update({ mode: 'history', historyCommit: null })}
+            title="Step through every commit in this review that changes the file"
+          >
+            History
+          </button>
         </div>
-        <button
-          className={`btn small ${pane.pinnedCommit ? 'active' : ''}`}
-          title={pane.pinnedCommit ? 'Pinned to this commit — click to follow the current commit' : 'Pin this pane to the current commit'}
-          onClick={() => update({ pinnedCommit: pane.pinnedCommit ? null : ui.commitKey })}
-        >
-          📌 {pane.pinnedCommit ? commitLabel : 'Pin'}
-        </button>
+        {!isHistory && (
+          <button
+            className={`btn small ${pane.pinnedCommit ? 'active' : ''}`}
+            title={pane.pinnedCommit ? 'Pinned to this commit — click to follow the current commit' : 'Pin this pane to the current commit'}
+            onClick={() => update({ pinnedCommit: pane.pinnedCommit ? null : ui.commitKey })}
+          >
+            📌 {pane.pinnedCommit ? commitLabel : 'Pin'}
+          </button>
+        )}
         {canClose && (
           <button className="icon-btn" aria-label="Close pane" onClick={close}>
             ×
           </button>
         )}
       </header>
-      {file && pane.mode === 'diff' && (
+      {isHistory && (
+        <div className="history-bar">
+          {!history ? (
+            <span className="muted small">Loading history…</span>
+          ) : history.length === 0 ? (
+            <span className="muted small">No commit in this review changes this file.</span>
+          ) : (
+            <>
+              <button className="icon-btn" disabled={stepIndex <= 0} onClick={() => update({ historyCommit: history[stepIndex - 1].sha })} aria-label="Previous change">
+                ◀
+              </button>
+              <div className="history-dots">
+                {history.map((h, i) => {
+                  const c = review.commits.find((x) => x.sha === h.sha);
+                  return (
+                    <button
+                      key={h.sha}
+                      className={`dot ${i === stepIndex ? 'on' : ''} ${h.sha === ui.commitKey ? 'current' : ''}`}
+                      title={`Commit ${(order.get(h.sha) ?? 0) + 1}: ${c?.subject ?? ''}${h.oldPath ? ` (renamed from ${h.oldPath})` : ''}`}
+                      onClick={() => update({ historyCommit: h.sha })}
+                    >
+                      {(order.get(h.sha) ?? 0) + 1}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                className="icon-btn"
+                disabled={stepIndex >= history.length - 1}
+                onClick={() => update({ historyCommit: history[stepIndex + 1].sha })}
+                aria-label="Next change"
+              >
+                ▶
+              </button>
+              <span className="small ellipsis history-subject" title={stepCommit?.subject}>
+                {stepIndex + 1}/{history.length} · {stepCommit?.subject}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+      {file && showsDiff && (
         <div className="pane-subhead">
           <StatusBadge status={file.status} />
           <span className="stat">
             <span className="add">+{file.additions}</span> <span className="del">−{file.deletions}</span>
           </span>
+          {isHistory && <span className="pill mono">{shortSha(commitKey)}</span>}
           <span className="spacer" />
           <button className="btn-link" onClick={() => setDraft({ commitKey, path: file.path, side: 'New', line: null, endLine: null, viewId: pane.id })}>
             💬 File note
@@ -262,21 +367,26 @@ export function Pane({ pane, active, canClose }: { pane: PaneSpec; active: boole
         {effectiveMode === 'missing' ? (
           <div className="diff-message">
             <p>
-              <code>{pane.path}</code> is not changed in {commitKey === RANGE ? 'this pull request' : `commit ${shortSha(commitKey)}`}.
+              <code>{pane.path}</code> is not changed in {isSpecialKey(commitKey) ? 'this view' : `commit ${shortSha(commitKey)}`}.
             </p>
-            <button className="btn" onClick={() => update({ mode: 'file' })}>
-              Show the file at this commit
-            </button>
+            <div className="row">
+              <button className="btn" onClick={() => update({ mode: 'file' })}>
+                Show the file at this commit
+              </button>
+              <button className="btn" onClick={() => update({ mode: 'history', historyCommit: null })}>
+                Show its history
+              </button>
+            </div>
           </div>
         ) : pane.mode === 'file' ? (
           <FileContentView viewId={pane.id} commitKey={commitKey} path={pane.path} />
-        ) : error ? (
+        ) : isHistory && !step ? null : error ? (
           <div className="diff-message error">{error}</div>
         ) : !diff ? (
           <div className="diff-message muted">Loading…</div>
         ) : (
           <div className={loading ? 'stale' : ''}>
-            <DiffView viewId={pane.id} commitKey={commitKey} path={pane.path} diff={diff} isFull={full} onExpand={() => setFull(true)} stale={loading} />
+            <DiffView viewId={pane.id} commitKey={commitKey} path={viewPath} diff={diff} isFull={full} onExpand={() => setFull(true)} stale={loading} />
           </div>
         )}
       </div>

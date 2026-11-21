@@ -41,7 +41,7 @@ public sealed class GitRunner
         Timeout = timeout ?? TimeSpan.FromSeconds(60);
     }
 
-    public async Task<GitResult> RunAsync(string workingDirectory, IEnumerable<string> args, CancellationToken ct = default)
+    public async Task<GitResult> RunAsync(string workingDirectory, IEnumerable<string> args, CancellationToken ct = default, string? stdin = null)
     {
         var psi = new ProcessStartInfo(GitExecutable)
         {
@@ -53,6 +53,7 @@ public sealed class GitRunner
             CreateNoWindow = true,
             StandardOutputEncoding = new UTF8Encoding(false),
             StandardErrorEncoding = new UTF8Encoding(false),
+            StandardInputEncoding = new UTF8Encoding(false),
         };
         foreach (var a in BaseArgs) psi.ArgumentList.Add(a);
         foreach (var a in args) psi.ArgumentList.Add(a);
@@ -73,15 +74,22 @@ public sealed class GitRunner
         {
             throw new GitException($"Could not start git ('{GitExecutable}'). Is git installed and on PATH? {ex.Message}");
         }
-        process.StandardInput.Close();
-
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(Timeout);
 
+        // Start reading before writing stdin so large outputs can't deadlock the pipe.
         var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
         var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
         try
         {
+            if (stdin != null)
+            {
+                var input = process.StandardInput;
+                input.AutoFlush = false;
+                await input.WriteAsync(stdin.AsMemory(), timeoutCts.Token);
+                await input.FlushAsync(timeoutCts.Token);
+            }
+            process.StandardInput.Close();
             await process.WaitForExitAsync(timeoutCts.Token);
             var stdout = await stdoutTask;
             var stderr = await stderrTask;
@@ -96,10 +104,10 @@ public sealed class GitRunner
     }
 
     /// <summary>Runs git and throws <see cref="GitException"/> on a non-zero exit code.</summary>
-    public async Task<string> RunCheckedAsync(string workingDirectory, IEnumerable<string> args, CancellationToken ct = default)
+    public async Task<string> RunCheckedAsync(string workingDirectory, IEnumerable<string> args, CancellationToken ct = default, string? stdin = null)
     {
         var list = args as IReadOnlyCollection<string> ?? args.ToList();
-        var result = await RunAsync(workingDirectory, list, ct);
+        var result = await RunAsync(workingDirectory, list, ct, stdin);
         if (!result.Success)
         {
             var cmd = string.Join(' ', list);
