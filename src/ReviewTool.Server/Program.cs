@@ -33,6 +33,16 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 builder.WebHost.UseStaticWebAssets();
 
 if (cli.DataDirectory != null) builder.Configuration["ReviewTool:DataDirectory"] = Path.GetFullPath(cli.DataDirectory);
+var cliHosts = cli.EffectiveAllowedHosts();
+if (cliHosts.Count > 0)
+{
+    // Appended after any hosts from configuration.
+    var existingHosts = builder.Configuration.GetSection("ReviewTool:AllowedHosts").GetChildren().Count();
+    for (var i = 0; i < cliHosts.Count; i++) builder.Configuration[$"ReviewTool:AllowedHosts:{existingHosts + i}"] = cliHosts[i];
+}
+if (cli.ListensEverywhere && cli.AllowedHosts.Count == 0)
+    Console.WriteLine($"Note: listening on all interfaces, but only requests addressed to localhost are accepted. "
+        + "Add --allowed-host <name> for each name or IP this machine will be reached by.");
 var host = cli.Host ?? "localhost";
 var explicitUrls = cli.HostArgs.Any(a => a.StartsWith("--urls", StringComparison.Ordinal)) || Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is { Length: > 0 };
 var port = cli.Port ?? CliOptions.DefaultPort;
@@ -115,7 +125,10 @@ app.MapFallback(async context =>
 await app.StartAsync();
 
 var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()?.Addresses.FirstOrDefault() ?? $"http://{host}:{port}";
-address = address.Replace("127.0.0.1", "localhost", StringComparison.Ordinal).TrimEnd('/');
+// Wildcard and loopback binds print as "localhost" so the URL can be opened.
+foreach (var bind in new[] { "127.0.0.1", "0.0.0.0", "[::]", "[::1]", "*", "+" })
+    address = address.Replace($"//{bind}:", "//localhost:", StringComparison.Ordinal);
+address = address.TrimEnd('/');
 var options = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<ReviewToolOptions>>().Value;
 var startUrl = address + "/";
 

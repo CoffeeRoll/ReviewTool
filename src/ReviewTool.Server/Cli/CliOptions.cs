@@ -19,12 +19,29 @@ public sealed class CliOptions
     public bool NoBrowser { get; private set; }
     public bool ServerOnly { get; private set; }
     public string? DataDirectory { get; private set; }
+
+    /// <summary>Extra host names the API should answer to (besides localhost).</summary>
+    public List<string> AllowedHosts { get; } = [];
     public bool ShowHelp { get; private set; }
     public bool ShowVersion { get; private set; }
     public string? Error { get; private set; }
 
     /// <summary>Arguments not recognized here, passed on to ASP.NET Core (e.g. <c>--urls</c>).</summary>
     public List<string> HostArgs { get; } = [];
+
+    /// <summary>
+    /// Host names to allow based on the options: every --allowed-host, plus --host itself when it's a
+    /// specific name rather than "listen everywhere" (0.0.0.0, ::, *, +).
+    /// </summary>
+    public List<string> EffectiveAllowedHosts()
+    {
+        var list = new List<string>(AllowedHosts);
+        if (Host is { } h && h is not ("0.0.0.0" or "::" or "[::]" or "*" or "+" or "localhost")) list.Add(h);
+        return list;
+    }
+
+    /// <summary>True when --host listens on every interface, so the machine's own names aren't known up front.</summary>
+    public bool ListensEverywhere => Host is "0.0.0.0" or "::" or "[::]" or "*" or "+";
 
     /// <summary>True when the user asked for something specific to review.</summary>
     public bool HasReviewTarget => RepoPath != null || Base != null || Head != null || PullRequest != null;
@@ -89,6 +106,9 @@ public sealed class CliOptions
                 case "--data-dir":
                     o.DataDirectory = Value();
                     break;
+                case "--allowed-host":
+                    if (Value() is { } allowed) o.AllowedHosts.Add(allowed);
+                    break;
                 default:
                     if (arg.StartsWith('-'))
                     {
@@ -129,6 +149,9 @@ public sealed class CliOptions
               --remote <name>  Remote for --pr (default: origin)
           -p, --port <port>    Port to listen on (default: 5178; another free port is used if taken)
               --host <name>    Interface to bind (default: localhost). Keep it local: the API can read any repo.
+              --allowed-host <name>
+                               Also accept requests addressed to this host name (repeatable). Requests for
+                               other names are refused, which protects against DNS-rebinding attacks.
               --no-browser     Don't open a browser window
               --serve          Just start the server and open the review list
               --data-dir <dir> Where reviews are stored (default: ~/.reviewtool)

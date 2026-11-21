@@ -17,6 +17,13 @@ public sealed class ReviewToolOptions
 
     public int GitTimeoutSeconds { get; set; } = 120;
 
+    /// <summary>
+    /// Host names (besides localhost) the API answers to, e.g. "reviews.example.com" or "*.corp.example".
+    /// Empty: inherit the app's ASP.NET <c>AllowedHosts</c> if it isn't "*", otherwise loopback only.
+    /// "*" turns the check off (only do that behind something else that validates the host).
+    /// </summary>
+    public List<string> AllowedHosts { get; set; } = [];
+
     public string ResolveDataDirectory()
         => string.IsNullOrWhiteSpace(DataDirectory)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".reviewtool")
@@ -52,6 +59,7 @@ public static class ReviewToolApi
             return new JsonFileReviewStore(o.ResolveDataDirectory());
         });
         services.AddSingleton<ReviewService>();
+        services.AddSingleton<HostCheck>();
 
         // Publishing: one IReviewPublisher per platform. To add a platform, implement the interface and register it here.
         var credentialSettings = configuration.GetSection("ReviewTool:Credentials").Get<CredentialSettings>() ?? new CredentialSettings();
@@ -87,6 +95,9 @@ public static class ReviewToolApi
     public static RouteGroupBuilder MapReviewToolApi(this IEndpointRouteBuilder endpoints, string prefix = "/api")
     {
         var api = endpoints.MapGroup(prefix);
+        // Guard every endpoint against DNS-rebinding requests (see HostCheck).
+        var hostCheck = endpoints.ServiceProvider.GetRequiredService<HostCheck>();
+        api.AddEndpointFilter(hostCheck.FilterAsync);
 
         api.MapGet("/health", () => Results.Ok(new { status = "ok", app = "reviewtool", version = Version }));
 

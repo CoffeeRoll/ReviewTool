@@ -209,6 +209,7 @@ Set these in `src/ReviewTool.Server/appsettings.json` or as environment variable
 | `ReviewTool:DataDirectory` | `~/.reviewtool` | Where reviews are stored (`--data-dir`) |
 | `ReviewTool:GitExecutable` | `git` | Path to git |
 | `ReviewTool:GitTimeoutSeconds` | `120` | Timeout per git command |
+| `ReviewTool:AllowedHosts` | `[]` | Host names the API answers to besides localhost (`--allowed-host`). See *Security*. |
 | `ReviewTool:Credentials:Tokens` | `{}` | Tokens keyed by `github`, a host, or `github:host` |
 | `ReviewTool:Credentials:UseCliTools` / `UseGitCredentialHelper` | `true` | Whether to ask `gh` / git's credential helper for a token |
 | `ReviewTool:GitHub:EnterpriseHosts` / `ApiBaseUrls` | empty | GitHub Enterprise hosts, and their API URLs if not `https://host/api/v3` |
@@ -216,6 +217,27 @@ Set these in `src/ReviewTool.Server/appsettings.json` or as environment variable
 The address defaults to `http://localhost:5178`. Change it with `--port` / `--host`, or with `--urls`.
 Keep it on localhost: the API can read any repository on the machine. Installed as a tool, the settings
 file is next to the tool; environment variables are usually easier.
+
+### Security
+
+The API can read any git repository on the machine and post to GitHub with your token, so:
+
+- **It listens on localhost only** by default.
+- **It answers only requests addressed to known host names.** This blocks *DNS rebinding*, where a
+  web page points its own domain at `127.0.0.1` to get around the browser's same-origin rules.
+  - `localhost`, `127.0.0.1` and `[::1]` always work.
+  - Add other names with `ReviewTool:AllowedHosts` or `--allowed-host`. Patterns work like ASP.NET's
+    `AllowedHosts`: `reviews.example.com`, `*.corp.example`, or `*` to turn the check off.
+  - `--host some-name` allows that name automatically.
+  - With `--host 0.0.0.0`, list each name or IP the machine is reached by.
+- **Embedded in another app** (see below), the check travels with `MapReviewToolApi()`.
+  - If that app already sets ASP.NET's `AllowedHosts` (anything but `*`), ReviewTool uses the same
+    list, so nothing extra is needed.
+  - Otherwise set `ReviewTool:AllowedHosts` to the app's public host name(s).
+  - Behind a reverse proxy that rewrites the host, run `UseForwardedHeaders()` first so the check sees
+    the public name. Or use `*` if the proxy already validates hosts.
+- Cross-site requests from other pages are already blocked: the API only accepts JSON, and has no
+  CORS policy outside development.
 
 ## Project layout
 
@@ -241,6 +263,13 @@ builder.Services.AddReviewTool(builder.Configuration);
 // ...
 app.UseReviewToolErrors();            // optional: maps errors to ProblemDetails responses
 app.MapReviewToolApi("/review-api");  // any prefix
+```
+
+The API only answers requests for host names it knows. If your app is served under its own name, it
+either inherits your app's `AllowedHosts` or needs `ReviewTool:AllowedHosts` (see *Security*):
+
+```csharp
+builder.Services.Configure<ReviewToolOptions>(o => o.AllowedHosts.Add("portal.example.com"));
 ```
 
 The frontend reads its API base URL from `VITE_API_BASE` (default `api`), so it can be built to
