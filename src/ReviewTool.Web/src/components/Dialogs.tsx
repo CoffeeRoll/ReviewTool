@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
 import { shortSha } from '../lib/diff';
 import { useSession } from '../lib/session';
+import { PublishPanel } from './PublishPanel';
 import { RANGE, REVIEW_STATUSES, type ReviewStatus } from '../lib/types';
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
@@ -116,19 +117,22 @@ export function FinishDialog({ onClose }: { onClose: () => void }) {
   const { review, patchReview } = useSession();
   const [summary, setSummary] = useState(review.summary ?? '');
   const [status, setStatus] = useState<ReviewStatus>(review.status);
+  const [tab, setTab] = useState<'publish' | 'markdown'>('publish');
   const [includeResolved, setIncludeResolved] = useState(false);
   const [markdown, setMarkdown] = useState('');
   const [copied, setCopied] = useState(false);
+  const [savedSummary, setSavedSummary] = useState(review.summary ?? '');
 
   // Save summary/status as they change, then regenerate the export.
   useEffect(() => {
     const t = window.setTimeout(async () => {
       if (summary !== review.summary || status !== review.status) await patchReview({ summary, status });
-      setMarkdown(await api.exportMarkdown(review.id, includeResolved));
+      setSavedSummary(summary);
+      if (tab === 'markdown') setMarkdown(await api.exportMarkdown(review.id, includeResolved));
     }, 400);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [summary, status, includeResolved]);
+  }, [summary, status, includeResolved, tab]);
 
   const download = () => {
     const blob = new Blob([markdown], { type: 'text/markdown' });
@@ -154,30 +158,43 @@ export function FinishDialog({ onClose }: { onClose: () => void }) {
         </label>
         <label className="span-2">
           Overall summary
-          <textarea className="input" rows={4} value={summary} placeholder="High-level feedback for the author…" onChange={(e) => setSummary(e.target.value)} />
+          <textarea className="input" rows={3} value={summary} placeholder="High-level feedback for the author…" onChange={(e) => setSummary(e.target.value)} />
         </label>
       </div>
-      <div className="row">
-        <strong>Markdown export</strong>
-        <label className="small">
-          <input type="checkbox" checked={includeResolved} onChange={(e) => setIncludeResolved(e.target.checked)} /> include resolved notes
-        </label>
-        <span className="spacer" />
-        <button
-          className="btn"
-          onClick={async () => {
-            await navigator.clipboard?.writeText(markdown);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }}
-        >
-          {copied ? 'Copied!' : 'Copy'}
+      <div className="seg tabs">
+        <button className={tab === 'publish' ? 'on' : ''} onClick={() => setTab('publish')}>
+          Post to GitHub
         </button>
-        <button className="btn" onClick={download}>
-          Download .md
+        <button className={tab === 'markdown' ? 'on' : ''} onClick={() => setTab('markdown')}>
+          Export Markdown
         </button>
       </div>
-      <pre className="export-preview">{markdown || 'Generating…'}</pre>
+      {tab === 'publish' ? (
+        <PublishPanel status={status} summary={savedSummary} />
+      ) : (
+        <>
+          <div className="row">
+            <label className="small">
+              <input type="checkbox" checked={includeResolved} onChange={(e) => setIncludeResolved(e.target.checked)} /> include resolved notes
+            </label>
+            <span className="spacer" />
+            <button
+              className="btn"
+              onClick={async () => {
+                await navigator.clipboard?.writeText(markdown);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }}
+            >
+              {copied ? 'Copied!' : 'Copy'}
+            </button>
+            <button className="btn" onClick={download}>
+              Download .md
+            </button>
+          </div>
+          <pre className="export-preview">{markdown || 'Generating…'}</pre>
+        </>
+      )}
     </Modal>
   );
 }

@@ -9,6 +9,10 @@ import type {
   LaterChange,
   MovedBlock,
   NoteFollowUp,
+  PublishPreview,
+  PublishRequestBody,
+  PublishResult,
+  PublishTarget,
   NoteInput,
   RepoInfo,
   RepoRefs,
@@ -101,6 +105,11 @@ export const api = {
 
   exportMarkdown: (id: string, includeResolved = true) =>
     request<string>('GET', `/reviews/${enc(id)}/export.md${q({ includeResolved })}`),
+  publishTargets: (id: string) => request<PublishTarget[]>('GET', `/reviews/${enc(id)}/publish/targets`),
+  publishPreview: (id: string, body: PublishRequestBody, signal?: AbortSignal) =>
+    request<PublishPreview>('POST', `/reviews/${enc(id)}/publish/preview`, body, signal),
+  publish: (id: string, body: PublishRequestBody) => request<PublishResult>('POST', `/reviews/${enc(id)}/publish`, body),
+
   exportUrl: (id: string) => `${BASE}/reviews/${enc(id)}/export.md`,
 
   /** Fire-and-forget save that survives page unload. */

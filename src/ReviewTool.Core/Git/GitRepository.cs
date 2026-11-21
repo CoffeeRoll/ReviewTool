@@ -64,6 +64,12 @@ public sealed class GitRepository
         return new RepoInfo(Path, branch, remotes);
     }
 
+    public async Task<string?> GetRemoteUrlAsync(string remote, CancellationToken ct = default)
+    {
+        var r = await _git.RunAsync(Path, ["remote", "get-url", ValidateRev(remote, "remote")], ct);
+        return r.Success ? r.StdOut.Trim() : null;
+    }
+
     private async Task<string?> GetCurrentBranchAsync(CancellationToken ct)
     {
         var r = await _git.RunAsync(Path, ["symbolic-ref", "--short", "-q", "HEAD"], ct);

@@ -228,6 +228,7 @@ export interface Review {
   reviewedLines?: Record<string, Record<string, string[]>> | null;
   previousHead?: ReviewSnapshot | null;
   notes: ReviewNote[];
+  publications?: PublicationRecord[];
   uiState?: UiState | null;
 }
 
@@ -268,4 +269,91 @@ export interface CreateReviewRequest {
   headRef?: string;
   name?: string;
   pullRequest?: { number: number; remote?: string; provider?: string };
+}
+
+// ---- Publishing (GitHub and future platforms) ----
+export type PublishVerdict = 'Comment' | 'Approve' | 'RequestChanges';
+
+export interface PublishTarget {
+  provider: string;
+  providerName: string;
+  remote: string;
+  host: string;
+  repository: string;
+  webUrl: string;
+  authenticated: boolean;
+  authSource: string | null;
+  authHelp: string | null;
+}
+
+export interface PullRequestInfo {
+  number: number;
+  title: string;
+  url: string;
+  headSha: string;
+  headRef: string;
+  baseRef: string;
+  state: string;
+}
+
+export interface PreviewComment {
+  noteId: string;
+  kind: NoteKind;
+  path: string;
+  side: DiffSide;
+  startLine: number;
+  endLine: number;
+  body: string;
+}
+
+export interface PreviewGeneral {
+  noteId: string;
+  kind: NoteKind;
+  path: string | null;
+  line: number | null;
+  reason: string;
+}
+
+export interface PublishPreview {
+  target: PublishTarget;
+  pullRequest: PullRequestInfo | null;
+  verdict: PublishVerdict;
+  inline: PreviewComment[];
+  general: PreviewGeneral[];
+  alreadyPublished: number;
+  skippedResolved: number;
+  body: string;
+  warnings: string[];
+  blockers: string[];
+  /** No new notes, and the summary was already posted (or is empty). */
+  nothingNew: boolean;
+}
+
+export interface PublicationRecord {
+  provider: string;
+  host: string;
+  repository: string;
+  pullRequestNumber: number;
+  url: string;
+  verdict: string;
+  noteIds: string[];
+  inlineComments: number;
+  publishedAt: string;
+}
+
+export interface PublishResult {
+  url: string;
+  inlineComments: number;
+  generalNotes: number;
+  warnings: string[];
+  record: PublicationRecord;
+}
+
+export interface PublishRequestBody {
+  provider?: string;
+  remote?: string;
+  pullRequestNumber?: number;
+  verdict?: PublishVerdict;
+  includeResolved?: boolean;
+  republish?: boolean;
 }

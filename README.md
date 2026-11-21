@@ -55,6 +55,8 @@ specific lines. Your progress is saved, so you can stop and pick the review up a
     migration snapshots, and anything marked `linguist-generated` in `.gitattributes`.
   - The file list can show a **folder tree** or a flat list.
   - Very large diffs render in chunks so the page stays responsive.
+- **Post to GitHub.** Send the review (summary, verdict and notes) to the pull request. Notes become
+  inline comments wherever their code is still in the final diff (see *Posting to GitHub*).
 - **Pull requests by number.** Enter a PR number and ReviewTool fetches its head
   (`pull/N/head` for GitHub/Gitea, `merge-requests/N/head` for GitLab) with your normal git
   credentials.
@@ -66,16 +68,37 @@ specific lines. Your progress is saved, so you can stop and pick the review up a
 
 ## Quick start
 
-Requirements: [.NET 10 SDK](https://dotnet.microsoft.com/download), Node.js 20+, and `git` on your `PATH`.
+Requirements: [.NET 10 SDK](https://dotnet.microsoft.com/download), Node.js 20+ (to build the UI), and `git` on your `PATH`.
+
+### Install the `reviewtool` command
+
+```bash
+scripts/install-tool.sh          # macOS / Linux
+scripts/install-tool.ps1         # Windows (PowerShell)
+```
+
+This builds the UI, packs ReviewTool as a [.NET tool](https://learn.microsoft.com/dotnet/core/tools/global-tools)
+into `artifacts/nupkg`, and installs it globally. Then, inside any repository:
+
+```bash
+reviewtool                       # review the current branch against the default branch
+reviewtool --pr 123              # review pull request #123 (fetched from origin)
+reviewtool ../api --base develop # another repo, another base branch
+reviewtool --help
+```
+
+ReviewTool starts on <http://localhost:5178>, opens your browser on the review, and **resumes** it if you've
+already started reviewing the same branches. If it's already running, the command reuses that server. If
+there's nothing to review (e.g. you're on `main`), the home page opens with the repository filled in.
+
+### Run from source
 
 ```bash
 dotnet run --project src/ReviewTool.Server
 ```
 
 Then open <http://localhost:5178>. The first build runs `npm install` and `npm run build` for the UI
-for you.
-
-Enter the path to a local repository, pick a base branch (e.g. `main`) and a head branch (the PR
+for you. Enter the path to a local repository, pick a base branch (e.g. `main`) and a head branch (the PR
 branch) or a PR number, and click **Start review**.
 
 To try it on sample data:
@@ -101,6 +124,55 @@ scripts/create-demo-repo.sh /tmp/reviewtool-demo   # then review main ← featur
 | <kbd>c</kbd> | Note on the current commit |
 | <kbd>Shift</kbd>+<kbd>N</kbd> | Notes panel |
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> / <kbd>Esc</kbd> | Save / cancel a note |
+
+## Posting to GitHub
+
+**Finish → Post to GitHub** posts the review to the pull request as a single GitHub review: your summary,
+a verdict (*Comment*, *Approve* or *Request changes*), and your notes.
+
+- **Inline where possible.** GitHub only accepts inline comments on the pull request's overall diff at
+  its latest commit, but your notes were written against individual commits. ReviewTool traces each
+  note's lines forward to the head commit (`git blame --reverse`). If the code is unchanged and inside
+  the PR's diff, the note becomes an inline comment on its new line number.
+- **Everything else goes in the review text,** grouped by commit and with a code snippet. That covers
+  code rewritten by a later commit, commit- and file-level notes, and lines outside the diff. The
+  dialog shows which notes go where, and why, before anything is sent.
+- **Safe to repeat.** Posted notes are recorded in the review, so posting again only sends new notes.
+  ReviewTool refuses to post if the PR on GitHub is at a different commit than the one you reviewed,
+  because comments would land on the wrong lines. Push or refresh first.
+- **Finding the PR.** The PR is found from the repository's GitHub remote and your branch name, or from
+  the number you started the review with. You can also type the number in the dialog.
+
+**Signing in.** ReviewTool looks for a token in this order and never stores it in reviews or sends it to the browser:
+1. `ReviewTool:Credentials:Tokens:github` in configuration
+2. `GITHUB_TOKEN` / `GH_TOKEN` (or `GH_ENTERPRISE_TOKEN` for GitHub Enterprise)
+3. the GitHub CLI: `gh auth token` (so `gh auth login` is all most people need)
+4. git's own credential helper (the one you push with)
+
+The token needs permission to write pull request reviews.
+
+**GitHub Enterprise Server** works automatically for hosts named `github.*`. For other hosts, add them to
+`ReviewTool:GitHub:EnterpriseHosts`, or map them to an API URL with `ReviewTool:GitHub:ApiBaseUrls`.
+
+### Adding another platform (GitLab, Azure DevOps, …)
+
+Publishing is split so a new platform only has to talk to its API:
+
+| Piece | Platform-neutral? | Where |
+| --- | --- | --- |
+| Find remotes, credentials lookup, preview, "already posted" bookkeeping | yes | `Publishing/PublishingService.cs`, `CredentialResolver.cs` |
+| Decide which notes are inline and map their lines to the head commit | yes | `Publishing/PublishPlanner.cs` |
+| Markdown for comments and the review text | yes | `Publishing/PublishFormatter.cs` |
+| Talk to the platform's API | **no** | `Publishing/GitHub/GitHubPublisher.cs` |
+
+To add a platform, implement `IReviewPublisher`:
+- `CanHandle(remote)`: recognise the host
+- `GetCredentialHints`: environment variables, CLI tool, help text
+- `GetPullRequestAsync` / `FindPullRequestAsync`
+- `PublishAsync`: turn the `PublishPlan` into API calls
+
+Then register it in `AddReviewTool()` (`ReviewToolApi.cs`). The UI picks up any platform the server
+reports. `PublicationRecord` already stores the provider id, so the bookkeeping works for every platform.
 
 ## Development
 
@@ -134,21 +206,30 @@ Set these in `src/ReviewTool.Server/appsettings.json` or as environment variable
 
 | Setting | Default | |
 | --- | --- | --- |
-| `Urls` | `http://localhost:5178` | Address to listen on. Keep it on localhost: the API can read any repository on the machine. |
-| `ReviewTool:DataDirectory` | `~/.reviewtool` | Where reviews are stored |
+| `ReviewTool:DataDirectory` | `~/.reviewtool` | Where reviews are stored (`--data-dir`) |
 | `ReviewTool:GitExecutable` | `git` | Path to git |
 | `ReviewTool:GitTimeoutSeconds` | `120` | Timeout per git command |
+| `ReviewTool:Credentials:Tokens` | `{}` | Tokens keyed by `github`, a host, or `github:host` |
+| `ReviewTool:Credentials:UseCliTools` / `UseGitCredentialHelper` | `true` | Whether to ask `gh` / git's credential helper for a token |
+| `ReviewTool:GitHub:EnterpriseHosts` / `ApiBaseUrls` | empty | GitHub Enterprise hosts, and their API URLs if not `https://host/api/v3` |
+
+The address defaults to `http://localhost:5178`. Change it with `--port` / `--host`, or with `--urls`.
+Keep it on localhost: the API can read any repository on the machine. Installed as a tool, the settings
+file is next to the tool; environment variables are usually easier.
 
 ## Project layout
 
 ```
 src/
-  ReviewTool.Core/      Git access (GitRunner, GitRepository, DiffParser) and review logic
+  ReviewTool.Core/      Git access (GitRunner, GitRepository, DiffParser), review logic
                         (Review model, JsonFileReviewStore, ReviewService, Markdown export)
-  ReviewTool.Server/    ASP.NET Core host; ReviewToolApi.cs maps the HTTP endpoints
+                        and Publishing/ (platform-neutral planner + GitHub adapter)
+  ReviewTool.Server/    ASP.NET Core host and the `reviewtool` command (Cli/);
+                        ReviewToolApi.cs maps the HTTP endpoints
   ReviewTool.Web/       React frontend (Vite + TypeScript)
-tests/ReviewTool.Tests/ xUnit tests (run against real temporary git repos)
-scripts/                create-demo-repo.sh
+tests/ReviewTool.Tests/ xUnit tests (real temporary git repos; GitHub API is faked)
+scripts/                create-demo-repo.sh, install-tool.sh / .ps1
+artifacts/nupkg/        packed tool (git-ignored)
 ```
 
 ### Embedding in another app
@@ -184,8 +265,12 @@ implementation (e.g. a database) in place of the JSON file store.
 | `GET /api/reviews/{id}/followups` · `GET /api/reviews/{id}/file-history?path=` | Notes to revisit · a file's commits |
 | `POST /api/reviews/{id}/notes` · `PATCH/DELETE .../notes/{noteId}` | Notes |
 | `GET /api/reviews/{id}/export.md` | Markdown export |
+| `POST /api/reviews/open` | Resume the matching review or create one (used by the `reviewtool` command) |
+| `GET /api/reviews/{id}/publish/targets` | Hosted repositories this review can be posted to, and whether you're signed in |
+| `POST /api/reviews/{id}/publish/preview` · `POST /api/reviews/{id}/publish` | `{ pullRequestNumber?, verdict?, includeResolved?, republish? }`: plan, then post |
 
 ## Ideas for later
 
-- Post notes as review comments on GitHub/Azure DevOps through their APIs
+- GitLab and Azure DevOps publishers (see *Adding another platform*)
+- Pull existing PR comments into the review
 - Desktop wrapper (e.g. Photino or Electron) around the same web UI

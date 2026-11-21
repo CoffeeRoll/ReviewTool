@@ -60,6 +60,9 @@ public sealed class Review
 
     public List<ReviewNote> Notes { get; set; } = [];
 
+    /// <summary>Times this review was posted to a hosting platform (newest last).</summary>
+    public List<PublicationRecord> Publications { get; set; } = [];
+
     /// <summary>Opaque UI state owned by the frontend (current commit, open panes, view options...).</summary>
     public JsonObject? UiState { get; set; }
 
@@ -210,4 +213,20 @@ public sealed record ReviewSummary(
             r.CreatedAt, r.UpdatedAt, active.Count, reviewedCommits, active.Sum(c => c.FileCount), reviewedFiles,
             r.Notes.Count, r.Notes.Count(n => !n.Resolved), r.PullRequest);
     }
+}
+
+/// <summary>A record of posting the review to a platform, so notes aren't posted twice.</summary>
+public sealed class PublicationRecord
+{
+    public string Provider { get; set; } = "";
+    public string Host { get; set; } = "";
+    public string Repository { get; set; } = "";
+    public int PullRequestNumber { get; set; }
+    public string Url { get; set; } = "";
+    public string ExternalId { get; set; } = "";
+    public string HeadSha { get; set; } = "";
+    public string Verdict { get; set; } = "";
+    public List<string> NoteIds { get; set; } = [];
+    public int InlineComments { get; set; }
+    public DateTimeOffset PublishedAt { get; set; }
 }

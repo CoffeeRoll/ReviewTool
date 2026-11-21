@@ -19,5 +19,7 @@ export function App() {
     if (!m) document.title = 'ReviewTool';
   }, [m]);
   if (m) return <ReviewPage id={m[1]} />;
-  return <HomePage />;
+  // "#/?repo=/path" (used by the reviewtool command) pre-fills the new-review form.
+  const repo = new URLSearchParams(route.split('?')[1] ?? '').get('repo') ?? undefined;
+  return <HomePage key={repo ?? ''} initialRepo={repo} />;
 }

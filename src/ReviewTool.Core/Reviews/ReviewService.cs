@@ -99,6 +99,34 @@ public sealed class ReviewService(IReviewStore store, GitRunner git)
         return review;
     }
 
+    /// <summary>
+    /// Resumes the most recent review of the same repository and branches (or pull request), refreshing
+    /// it, or creates a new one. Used by the command line so running it twice continues the same review.
+    /// </summary>
+    public async Task<(Review Review, bool Created)> OpenOrCreateAsync(CreateReviewRequest request, CancellationToken ct = default)
+    {
+        var repo = await OpenRepoAsync(request.RepoPath, ct);
+        var all = (await store.ListAsync(ct)).Where(r => string.Equals(r.RepoPath, repo.Path, StringComparison.Ordinal)).ToList();
+
+        Review? existing;
+        if (request.PullRequest is { } pr)
+        {
+            var remote = string.IsNullOrWhiteSpace(pr.Remote) ? "origin" : pr.Remote.Trim();
+            existing = all.FirstOrDefault(r => r.PullRequest?.Number == pr.Number && r.PullRequest.Remote == remote);
+        }
+        else
+        {
+            var refs = await repo.ListRefsAsync(ct);
+            var head = string.IsNullOrWhiteSpace(request.HeadRef) ? refs.CurrentBranch ?? "HEAD" : request.HeadRef.Trim();
+            var baseRef = string.IsNullOrWhiteSpace(request.BaseRef) ? refs.DefaultBranch : request.BaseRef.Trim();
+            existing = all.FirstOrDefault(r => r.PullRequest == null && r.HeadRef == head && (baseRef == null || r.BaseRef == baseRef));
+        }
+
+        if (existing == null) return (await CreateAsync(request, ct), true);
+        try { return (await RefreshAsync(existing.Id, ct), false); }
+        catch (GitException) { return (existing, false); } // e.g. offline PR re-fetch; resume what we have
+    }
+
     /// <summary>Re-resolves base/head (re-fetching the PR if needed) and updates the commit list, keeping notes and progress.</summary>
     public async Task<Review> RefreshAsync(string id, CancellationToken ct = default)
     {

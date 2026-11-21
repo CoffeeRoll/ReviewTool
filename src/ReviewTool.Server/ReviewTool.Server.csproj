@@ -10,6 +10,24 @@
     <BuildWebUi Condition="'$(BuildWebUi)' == ''">true</BuildWebUi>
   </PropertyGroup>
 
+  <!-- Packaged as a .NET tool: `dotnet tool install -g ReviewTool`, then run `reviewtool` in a repo. -->
+  <PropertyGroup>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>reviewtool</ToolCommandName>
+    <PackageId>ReviewTool</PackageId>
+    <Version>0.3.0</Version>
+    <Authors>ReviewTool contributors</Authors>
+    <Description>Review a git branch or pull request one commit at a time, with line notes, saved progress and side-by-side panes.</Description>
+    <PackageTags>git;code-review;pull-request;review;dotnet-tool</PackageTags>
+    <PackageOutputPath>$(MSBuildProjectDirectory)/../../artifacts/nupkg</PackageOutputPath>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" Visible="false" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\ReviewTool.Core\ReviewTool.Core.csproj" />
   </ItemGroup>
@@ -25,18 +43,22 @@
     <Warning Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/index.html')" Text="The web UI could not be built. Install Node.js 20+ and run 'npm install &amp;&amp; npm run build' in src/ReviewTool.Web." />
   </Target>
 
-  <!-- Publishing always rebuilds the UI and includes it in the output. -->
-  <Target Name="PublishWebUi" AfterTargets="ComputeFilesToPublish" Condition="'$(BuildWebUi)' == 'true'">
-    <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(WebUiDir)" />
-    <Exec Command="npm run build" WorkingDirectory="$(WebUiDir)" />
+  <!--
+    Publish/pack: make sure the built UI is in the output. If wwwroot didn't exist when the project was
+    evaluated (fresh clone), the static-asset pipeline missed it, so add the files here.
+    For a fresh UI build before packing, run scripts/install-tool.sh (or `npm run build` first).
+  -->
+  <Target Name="PublishWebUi" AfterTargets="ComputeFilesToPublish">
     <ItemGroup>
-      <WebUiFiles Include="wwwroot/**" />
-      <ResolvedFileToPublish Include="@(WebUiFiles->'%(FullPath)')" Exclude="@(ResolvedFileToPublish)">
-        <RelativePath>%(WebUiFiles.Identity)</RelativePath>
+      <_PublishedWebUi Include="@(ResolvedFileToPublish)" Condition="$([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').Replace('\','/').StartsWith('wwwroot/'))" />
+      <_WebUiFiles Include="$(MSBuildProjectDirectory)/wwwroot/**" Condition="'@(_PublishedWebUi)' == ''" />
+      <ResolvedFileToPublish Include="@(_WebUiFiles)">
+        <RelativePath>wwwroot/%(_WebUiFiles.RecursiveDir)%(_WebUiFiles.Filename)%(_WebUiFiles.Extension)</RelativePath>
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
         <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
       </ResolvedFileToPublish>
     </ItemGroup>
+    <Warning Condition="'@(_PublishedWebUi)' == '' And '@(_WebUiFiles)' == ''" Text="The web UI is missing from the output. Run 'npm ci &amp;&amp; npm run build' in src/ReviewTool.Web first." />
   </Target>
 
 </Project>

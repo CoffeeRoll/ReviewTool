@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http.HttpResults;
 using ReviewTool.Core.Git;
+using ReviewTool.Core.Publishing;
+using ReviewTool.Core.Publishing.GitHub;
 using ReviewTool.Core.Reviews;
 
 namespace ReviewTool.Server;
@@ -30,6 +32,12 @@ public sealed record SetLinesReviewedRequest(string Path, List<string> Ranges, b
 /// </summary>
 public static class ReviewToolApi
 {
+    /// <summary>Product version (from the assembly's informational version, without the source hash).</summary>
+    public static string Version { get; } =
+        (typeof(ReviewToolApi).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "0.0.0")
+        .Split('+')[0];
+
     public static IServiceCollection AddReviewTool(this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<ReviewToolOptions>(configuration.GetSection("ReviewTool"));
@@ -44,6 +52,15 @@ public static class ReviewToolApi
             return new JsonFileReviewStore(o.ResolveDataDirectory());
         });
         services.AddSingleton<ReviewService>();
+
+        // Publishing: one IReviewPublisher per platform. To add a platform, implement the interface and register it here.
+        var credentialSettings = configuration.GetSection("ReviewTool:Credentials").Get<CredentialSettings>() ?? new CredentialSettings();
+        var gitHubOptions = configuration.GetSection("ReviewTool:GitHub").Get<GitHubOptions>() ?? new GitHubOptions();
+        services.AddHttpClient("publishing", c => c.Timeout = TimeSpan.FromSeconds(60));
+        services.AddSingleton<ICredentialResolver>(new DefaultCredentialResolver(credentialSettings));
+        services.AddSingleton<IReviewPublisher>(sp =>
+            new GitHubPublisher(sp.GetRequiredService<IHttpClientFactory>().CreateClient("publishing"), gitHubOptions));
+        services.AddSingleton<PublishingService>();
         services.AddProblemDetails();
         return services;
     }
@@ -57,6 +74,7 @@ public static class ReviewToolApi
             {
                 ReviewNotFoundException => (StatusCodes.Status404NotFound, "Not found"),
                 ReviewValidationException => (StatusCodes.Status400BadRequest, "Invalid request"),
+                PublishException => (StatusCodes.Status400BadRequest, "Couldn't publish"),
                 GitException => (StatusCodes.Status400BadRequest, "Git error"),
                 ArgumentException => (StatusCodes.Status400BadRequest, "Invalid request"),
                 BadHttpRequestException b => (b.StatusCode, "Bad request"),
@@ -70,7 +88,7 @@ public static class ReviewToolApi
     {
         var api = endpoints.MapGroup(prefix);
 
-        api.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+        api.MapGet("/health", () => Results.Ok(new { status = "ok", app = "reviewtool", version = Version }));
 
         // ---- Repository helpers (used by the "new review" form) ----
         var repo = api.MapGroup("/repo");
@@ -92,6 +110,11 @@ public static class ReviewToolApi
             var review = await svc.CreateAsync(req, ct);
             return TypedResults.Created($"{prefix}/reviews/{review.Id}", review);
         });
+        reviews.MapPost("/open", async (CreateReviewRequest req, ReviewService svc, CancellationToken ct) =>
+        {
+            var (review, created) = await svc.OpenOrCreateAsync(req, ct);
+            return Results.Ok(new { review, created });
+        });
         reviews.MapGet("/{id}", (string id, ReviewService svc, CancellationToken ct) => svc.GetAsync(id, ct));
         reviews.MapPatch("/{id}", (string id, ReviewPatch patch, ReviewService svc, CancellationToken ct) => svc.PatchAsync(id, patch, ct));
         reviews.MapDelete("/{id}", async Task<Results<NoContent, NotFound>> (string id, ReviewService svc, CancellationToken ct) =>
@@ -111,6 +134,11 @@ public static class ReviewToolApi
         reviews.MapGet("/{id}/file-history", (string id, string path, ReviewService svc, CancellationToken ct) =>
             svc.GetFileHistoryAsync(id, path, ct));
         reviews.MapGet("/{id}/followups", (string id, ReviewService svc, CancellationToken ct) => svc.GetNoteFollowUpsAsync(id, ct));
+
+        // ---- Posting to GitHub (and other platforms) ----
+        reviews.MapGet("/{id}/publish/targets", (string id, PublishingService svc, CancellationToken ct) => svc.GetTargetsAsync(id, ct));
+        reviews.MapPost("/{id}/publish/preview", (string id, PublishRequest req, PublishingService svc, CancellationToken ct) => svc.PreviewAsync(id, req, ct));
+        reviews.MapPost("/{id}/publish", (string id, PublishRequest req, PublishingService svc, CancellationToken ct) => svc.PublishAsync(id, req, ct));
         reviews.MapGet("/{id}/commits/{commit}/tree", (string id, string commit, ReviewService svc, CancellationToken ct) =>
             svc.ListTreeAsync(id, commit, ct));
         reviews.MapGet("/{id}/commits/{commit}/blob", (string id, string commit, string path, DiffSide? side, ReviewService svc, CancellationToken ct) =>

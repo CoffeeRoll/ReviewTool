@@ -1780,3 +1780,111 @@ textarea:focus {
 .legend.wd {
   background: var(--wd-add);
 }
+
+/* ---------- Publishing ---------- */
+.publish {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.publish-target {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.publish-form {
+  grid-template-columns: minmax(180px, 220px) 1fr;
+}
+.publish-form .hash {
+  color: var(--muted);
+  font-weight: 600;
+}
+.verdict-seg {
+  align-self: flex-start;
+}
+.verdict-seg button {
+  font-size: 13px;
+  padding: 5px 12px;
+}
+.pr-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.callout {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  border: 1px solid transparent;
+}
+.callout.error {
+  background: var(--del-bg);
+  border-color: var(--del-strong);
+  color: var(--text);
+}
+.callout.warn {
+  background: var(--later-bg);
+  border-color: var(--later);
+}
+.callout.ok {
+  background: var(--add-bg);
+  border-color: var(--add-strong);
+}
+.plan {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.plan-summary {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.plan-details {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plan-details ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.plan-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.ellipsis-2 {
+  display: -webkit-inline-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  vertical-align: top;
+}
+.publish-actions {
+  flex-wrap: wrap;
+}
+.published-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.publish-empty p {
+  margin: 4px 0;
+}

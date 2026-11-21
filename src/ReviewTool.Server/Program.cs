@@ -1,6 +1,79 @@
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using ReviewTool.Core.Git;
+using ReviewTool.Core.Reviews;
 using ReviewTool.Server;
+using ReviewTool.Server.Cli;
 
-var builder = WebApplication.CreateBuilder(args);
+var cli = CliOptions.Parse(args);
+if (cli.ShowHelp)
+{
+    Console.WriteLine(CliOptions.HelpText);
+    return 0;
+}
+if (cli.ShowVersion)
+{
+    Console.WriteLine(ReviewToolApi.Version);
+    return 0;
+}
+if (cli.Error != null)
+{
+    Console.Error.WriteLine($"error: {cli.Error}\nRun 'reviewtool --help' for usage.");
+    return 2;
+}
+
+// Content (appsettings, wwwroot) lives next to the app, not in the folder it was started from:
+// as a dotnet tool, the current directory is the user's repository.
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = cli.HostArgs.ToArray(),
+    ContentRootPath = AppContext.BaseDirectory,
+});
+// Serve the UI straight from the project's wwwroot when running from source (no-op when installed).
+builder.WebHost.UseStaticWebAssets();
+
+if (cli.DataDirectory != null) builder.Configuration["ReviewTool:DataDirectory"] = Path.GetFullPath(cli.DataDirectory);
+var host = cli.Host ?? "localhost";
+var explicitUrls = cli.HostArgs.Any(a => a.StartsWith("--urls", StringComparison.Ordinal)) || Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is { Length: > 0 };
+var port = cli.Port ?? CliOptions.DefaultPort;
+var isDev = builder.Environment.IsDevelopment();
+var wantsReview = !cli.ServerOnly && (cli.HasReviewTarget || !isDev);
+var cwd = Directory.GetCurrentDirectory();
+
+// In Development the launch profile (or test host) decides the address.
+if (!explicitUrls && (!isDev || cli.Port != null))
+{
+    if (!RunningInstance.IsPortFree(host, port))
+    {
+        var existing = $"http://{host}:{port}";
+        if (await RunningInstance.IsReviewToolAsync(existing))
+        {
+            // Another ReviewTool is already serving this port: hand the review to it and exit.
+            var target = existing + "/";
+            if (wantsReview && await IsGitRepoAsync(cli.RepoPath ?? cwd))
+            {
+                try
+                {
+                    var id = await RunningInstance.OpenReviewAsync(existing, cli.ToRequest(cli.RepoPath ?? cwd));
+                    target = $"{existing}/#/review/{id}";
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Couldn't start a review: {ex.Message}");
+                    target = $"{existing}/#/?repo={Uri.EscapeDataString(Path.GetFullPath(cli.RepoPath ?? cwd))}";
+                }
+            }
+            Console.WriteLine($"ReviewTool is already running at {existing}");
+            Console.WriteLine($"  {target}");
+            if (!cli.NoBrowser) BrowserLauncher.TryOpen(target);
+            return 0;
+        }
+        Console.WriteLine($"Port {port} is in use; picking another one.");
+        port = 0;
+    }
+    // Kestrel can't pick a dynamic port for "localhost", so use the loopback address for that.
+    builder.WebHost.UseUrls(port == 0 && host == "localhost" ? "http://127.0.0.1:0" : $"http://{host}:{port}");
+}
 
 builder.Services.AddReviewTool(builder.Configuration);
 builder.Services.AddCors(o => o.AddPolicy("dev", p => p
@@ -22,14 +95,13 @@ app.MapReviewToolApi();
 app.MapFallback("/api/{**rest}", () => Results.NotFound());
 app.MapFallback(async context =>
 {
-    var index = Path.Combine(app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot"), "index.html");
-    if (File.Exists(index))
+    var index = app.Environment.WebRootFileProvider.GetFileInfo("index.html");
+    context.Response.ContentType = "text/html; charset=utf-8";
+    if (index.Exists)
     {
-        context.Response.ContentType = "text/html; charset=utf-8";
         await context.Response.SendFileAsync(index);
         return;
     }
-    context.Response.ContentType = "text/html; charset=utf-8";
     await context.Response.WriteAsync("""
         <!doctype html><meta charset="utf-8"><title>ReviewTool</title>
         <body style="font-family:system-ui;max-width:40rem;margin:4rem auto;line-height:1.5">
@@ -40,10 +112,55 @@ app.MapFallback(async context =>
         """);
 });
 
-var logger = app.Services.GetRequiredService<ILogger<Program>>();
-var options = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<ReviewToolOptions>>().Value;
-logger.LogInformation("Reviews are stored in {Dir}", options.ResolveDataDirectory());
+await app.StartAsync();
 
-app.Run();
+var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()?.Addresses.FirstOrDefault() ?? $"http://{host}:{port}";
+address = address.Replace("127.0.0.1", "localhost", StringComparison.Ordinal).TrimEnd('/');
+var options = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<ReviewToolOptions>>().Value;
+var startUrl = address + "/";
+
+if (wantsReview)
+{
+    var repoPath = cli.RepoPath ?? cwd;
+    if (await IsGitRepoAsync(repoPath))
+    {
+        try
+        {
+            var service = app.Services.GetRequiredService<ReviewService>();
+            var (review, created) = await service.OpenOrCreateAsync(cli.ToRequest(repoPath));
+            var active = review.Commits.Count(c => !c.Outdated);
+            Console.WriteLine($"{(created ? "Started" : "Resuming")} review \"{review.Name}\" ({active} commit{(active == 1 ? "" : "s")})");
+            startUrl = $"{address}/#/review/{review.Id}";
+        }
+        catch (Exception ex) when (ex is GitException or ReviewValidationException)
+        {
+            Console.WriteLine($"Couldn't start a review automatically: {ex.Message}");
+            Console.WriteLine("Pick the branches in the browser instead.");
+            startUrl = $"{address}/#/?repo={Uri.EscapeDataString(Path.GetFullPath(repoPath))}";
+        }
+    }
+    else if (cli.HasReviewTarget)
+    {
+        Console.Error.WriteLine($"Not a git repository: {Path.GetFullPath(repoPath)}");
+    }
+}
+
+Console.WriteLine();
+Console.WriteLine($"  ReviewTool {ReviewToolApi.Version} is running at {address}");
+Console.WriteLine($"  Reviews are saved in {options.ResolveDataDirectory()}");
+Console.WriteLine($"  Press Ctrl+C to stop.");
+Console.WriteLine();
+if (!cli.NoBrowser && !isDev && !BrowserLauncher.TryOpen(startUrl)) Console.WriteLine($"Open {startUrl} in your browser.");
+else if (cli.NoBrowser || isDev) Console.WriteLine($"  Open {startUrl}");
+
+await app.WaitForShutdownAsync();
+return 0;
+
+static async Task<bool> IsGitRepoAsync(string path)
+{
+    if (!Directory.Exists(path)) return false;
+    var r = await new GitRunner(timeout: TimeSpan.FromSeconds(10)).RunAsync(path, ["rev-parse", "--is-inside-work-tree"]);
+    return r.Success && r.StdOut.Trim() == "true";
+}
 
 public partial class Program;

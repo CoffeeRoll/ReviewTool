@@ -23,7 +23,7 @@ function rememberRepo(path: string) {
   }
 }
 
-export function HomePage() {
+export function HomePage({ initialRepo }: { initialRepo?: string }) {
   const [reviews, setReviews] = useState<ReviewSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,7 +41,7 @@ export function HomePage() {
         </div>
         <ThemeToggle />
       </header>
-      <NewReviewForm reviewRepos={reviews?.map((r) => r.repoPath) ?? []} />
+      <NewReviewForm reviewRepos={reviews?.map((r) => r.repoPath) ?? []} initialRepo={initialRepo} />
       <section className="card">
         <h2>Reviews</h2>
         {error && <p className="error">{error}</p>}
@@ -103,9 +103,9 @@ function ReviewRow({ review: r, onDelete }: { review: ReviewSummary; onDelete: (
 
 type Mode = 'branches' | 'pr';
 
-function NewReviewForm({ reviewRepos }: { reviewRepos: string[] }) {
+function NewReviewForm({ reviewRepos, initialRepo }: { reviewRepos: string[]; initialRepo?: string }) {
   const recents = useMemo(() => [...new Set([...recentRepos(), ...reviewRepos])], [reviewRepos]);
-  const [path, setPath] = useState(recents[0] ?? '');
+  const [path, setPath] = useState(initialRepo ?? recents[0] ?? '');
   const [repo, setRepo] = useState<{ info: RepoInfo; refs: RepoRefs } | null>(null);
   const [mode, setMode] = useState<Mode>('branches');
   const [base, setBase] = useState('');
