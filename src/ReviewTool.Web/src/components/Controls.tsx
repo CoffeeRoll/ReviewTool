@@ -30,11 +30,14 @@ export function DiffStyleToggle({ value, onChange }: { value: DiffStyle; onChang
 type Theme = 'system' | 'light' | 'dark';
 const THEME_KEY = 'reviewtool.theme';
 
+/** Dark is the default; the toggle cycles dark → light → follow the OS. */
+const DEFAULT_THEME: Theme = 'dark';
+
 function readTheme(): Theme {
   try {
-    return (localStorage.getItem(THEME_KEY) as Theme) || 'system';
+    return (localStorage.getItem(THEME_KEY) as Theme) || DEFAULT_THEME;
   } catch {
-    return 'system';
+    return DEFAULT_THEME;
   }
 }
 
@@ -54,7 +57,7 @@ export function ThemeToggle() {
     }
     applyStoredTheme();
   }, [theme]);
-  const next: Record<Theme, Theme> = { system: 'light', light: 'dark', dark: 'system' };
+  const next: Record<Theme, Theme> = { dark: 'light', light: 'system', system: 'dark' };
   return (
     <button className="icon-btn theme-btn" title={`Theme: ${theme} (click to change)`} onClick={() => setTheme(next[theme])}>
       <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.5">

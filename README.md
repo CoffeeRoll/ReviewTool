@@ -36,7 +36,8 @@ specific lines. Your progress is saved, so you can stop and pick the review up a
 - **Export.** *Finish* lets you set a status (Approved / Changes requested / …) and an overall
   summary, and exports all notes as Markdown to paste into the PR.
 - Unified or split diffs, syntax highlighting, expand to the full file, line wrapping,
-  light/dark theme, and keyboard shortcuts (press <kbd>?</kbd>).
+  a dark theme by default (the theme button switches to light or to your OS setting), and keyboard
+  shortcuts (press <kbd>?</kbd>).
 
 ## Quick start
 
