@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ReviewTool.Server</RootNamespace>
+    <WebUiDir>$(MSBuildProjectDirectory)/../ReviewTool.Web</WebUiDir>
+    <!-- Set to false (dotnet build -p:BuildWebUi=false) to skip building the React UI. -->
+    <BuildWebUi Condition="'$(BuildWebUi)' == ''">true</BuildWebUi>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ReviewTool.Core\ReviewTool.Core.csproj" />
+  </ItemGroup>
+
+  <!--
+    First build: if the UI has never been built, run npm so `dotnet run` works out of the box.
+    After changing UI code, run `npm run build` in src/ReviewTool.Web (or use `npm run dev`).
+  -->
+  <Target Name="BuildWebUiIfMissing" BeforeTargets="Build" Condition="'$(BuildWebUi)' == 'true' And !Exists('$(MSBuildProjectDirectory)/wwwroot/index.html')">
+    <Message Importance="high" Text="ReviewTool: building the web UI (npm install + npm run build)..." />
+    <Exec Command="npm install --no-audit --no-fund" WorkingDirectory="$(WebUiDir)" Condition="!Exists('$(WebUiDir)/node_modules')" ContinueOnError="true" />
+    <Exec Command="npm run build" WorkingDirectory="$(WebUiDir)" ContinueOnError="true" />
+    <Warning Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/index.html')" Text="The web UI could not be built. Install Node.js 20+ and run 'npm install &amp;&amp; npm run build' in src/ReviewTool.Web." />
+  </Target>
+
+  <!-- Publishing always rebuilds the UI and includes it in the output. -->
+  <Target Name="PublishWebUi" AfterTargets="ComputeFilesToPublish" Condition="'$(BuildWebUi)' == 'true'">
+    <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(WebUiDir)" />
+    <Exec Command="npm run build" WorkingDirectory="$(WebUiDir)" />
+    <ItemGroup>
+      <WebUiFiles Include="wwwroot/**" />
+      <ResolvedFileToPublish Include="@(WebUiFiles->'%(FullPath)')" Exclude="@(ResolvedFileToPublish)">
+        <RelativePath>%(WebUiFiles.Identity)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+</Project>

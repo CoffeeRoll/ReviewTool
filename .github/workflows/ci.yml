@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/ReviewTool.Web/package-lock.json
+      - name: Frontend
+        working-directory: src/ReviewTool.Web
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Backend
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.com
+          dotnet test -p:BuildWebUi=false

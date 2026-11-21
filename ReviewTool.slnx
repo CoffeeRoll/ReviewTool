@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ReviewTool.Core/ReviewTool.Core.csproj" />
+    <Project Path="src/ReviewTool.Server/ReviewTool.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ReviewTool.Tests/ReviewTool.Tests.csproj" />
+  </Folder>
+</Solution>
