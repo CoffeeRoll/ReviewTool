@@ -825,25 +825,44 @@ textarea:focus {
 .main.panes {
   overflow: hidden;
 }
-.commit-header {
-  padding: 14px 18px 10px;
+/* Commit bar: pinned to the top of the scrolling area so navigation never scrolls away. */
+.commit-bar {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 18px 8px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 var(--border), 0 4px 10px -8px rgba(0, 0, 0, 0.35);
 }
-.commit-header-row {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-  flex-wrap: wrap;
-}
-.commit-title {
+.commit-bar-title {
   min-width: 0;
-  flex: 1;
+  flex: 1 1 260px;
 }
-.commit-title h2 {
-  font-size: 18px;
-  margin: 2px 0 4px;
+.commit-bar h2 {
+  font-size: 17px;
+  margin: 1px 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bar-progress {
+  margin-left: 10px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.bar-progress.done {
+  color: var(--ok);
+}
+.commit-details {
+  padding: 8px 18px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 .eyebrow {
   font-size: 11px;
@@ -856,6 +875,7 @@ textarea:focus {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+  margin-left: auto;
 }
 .commit-body pre {
   margin: 4px 0 0;
@@ -886,11 +906,12 @@ textarea:focus {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  scroll-margin-top: 8px;
+  /* Land below the sticky commit bar when scrolled to. */
+  scroll-margin-top: calc(var(--commit-bar-h, 0px) + 8px);
 }
 .file-card-head {
   position: sticky;
-  top: 0;
+  top: var(--commit-bar-h, 0px);
   z-index: 3;
   display: flex;
   align-items: center;

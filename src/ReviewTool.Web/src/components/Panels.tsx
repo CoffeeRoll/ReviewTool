@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { basename, commitProgress, shortSha } from '../lib/diff';
 import { notesFor, useSession } from '../lib/session';
 import { RANGE, SINCE, isSpecialKey, type ReviewNote } from '../lib/types';
@@ -26,58 +26,46 @@ export function CommitHeader({ onMarkAndNext }: { onMarkAndNext: () => void }) {
 
   const { prev, next } = neighbours(commitKeys, key);
 
+  // The bar is sticky; publish its height so file headers and scroll targets sit just below it.
+  const barRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const bar = barRef.current;
+    const scroller = bar?.parentElement;
+    if (!bar || !scroller) return;
+    const update = () => scroller.style.setProperty('--commit-bar-h', `${bar.offsetHeight}px`);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
+
+  const eyebrow = commit
+    ? `Commit ${idx >= 0 ? `${idx + 1} of ${commitKeys.length}` : '(no longer in range)'}`
+    : key === SINCE
+      ? 'Since your last review'
+      : 'Combined diff';
+  const title = commit
+    ? commit.subject || '(no message)'
+    : key === SINCE && review.previousHead
+      ? `What changed since ${new Date(review.previousHead.recordedAt).toLocaleString()}`
+      : 'All changes in this review';
+  const total = commit?.fileCount ?? fileList?.length;
+
   return (
-    <div className="commit-header">
-      <div className="commit-header-row">
-        <div className="commit-title">
-          {commit ? (
-            <>
-              <div className="eyebrow">
-                Commit {idx >= 0 ? `${idx + 1} of ${commitKeys.length}` : '(no longer in range)'}
-                {commit.isMerge && <span className="pill">merge · diff vs first parent</span>}
-              </div>
-              <h2>{commit.subject || '(no message)'}</h2>
-              <div className="muted small">
-                <span className="mono copyable" title="Click to copy SHA" onClick={() => navigator.clipboard?.writeText(commit.sha)}>
-                  {shortSha(commit.sha)}
-                </span>{' '}
-                · {commit.authorName} &lt;{commit.authorEmail}&gt; · {new Date(commit.authorDate).toLocaleString()} ·{' '}
-                <span className="add">+{commit.additions}</span> <span className="del">−{commit.deletions}</span> in {commit.fileCount} file
-                {commit.fileCount === 1 ? '' : 's'}
-              </div>
-            </>
-          ) : key === SINCE && review.previousHead ? (
-            <>
-              <div className="eyebrow">Since your last review</div>
-              <h2>What changed since {new Date(review.previousHead.recordedAt).toLocaleString()}</h2>
-              <div className="muted small">
-                <span className="mono">{shortSha(review.previousHead.headSha)}</span> → <span className="mono">{shortSha(review.headSha)}</span>
-                {fileList ? ` · ${fileList.length} files` : ''} · only files this review touches (changes that came from the base branch
-                are left out)
-              </div>
-              {changedCommits.length > 0 ? (
-                <div className="since-commits">
-                  {changedCommits.map((c) => (
-                    <button key={c.sha} className="chip" onClick={() => selectCommit(c.sha)} title={c.subject}>
-                      <span className={`change-badge change-${c.sinceLastReview!.toLowerCase()}`}>{c.sinceLastReview === 'New' ? 'new' : 'changed'}</span>
-                      {c.subject}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="muted small">No commits were added or rewritten — the branch was only rebased.</div>
-              )}
-            </>
-          ) : (
-            <>
-              <div className="eyebrow">Combined diff</div>
-              <h2>All changes in this review</h2>
-              <div className="muted small">
-                <span className="mono">{review.baseRef}</span> ({shortSha(review.mergeBaseSha)}) → <span className="mono">{review.headRef}</span> (
-                {shortSha(review.headSha)}) · {commitKeys.length} commits{fileList ? ` · ${fileList.length} files` : ''}
-              </div>
-            </>
-          )}
+    <>
+      {/* Stays at the top while the diff scrolls, so commit navigation is always in reach. */}
+      <div className="commit-bar" ref={barRef}>
+        <div className="commit-bar-title">
+          <div className="eyebrow">
+            {eyebrow}
+            {total != null && total > 0 && (
+              <span className={`bar-progress ${progress.done ? 'done' : ''}`}>
+                {progress.reviewed}/{total} file{total === 1 ? '' : 's'} reviewed
+              </span>
+            )}
+            {commit?.isMerge && <span className="pill">merge · diff vs first parent</span>}
+          </div>
+          <h2 title={title}>{title}</h2>
         </div>
         <div className="commit-nav">
           <button className="btn" disabled={!prev} onClick={() => prev && selectCommit(prev)} title="Previous commit (p)">
@@ -92,26 +80,63 @@ export function CommitHeader({ onMarkAndNext }: { onMarkAndNext: () => void }) {
           </button>
         </div>
       </div>
-      {commit?.body && (
-        <div className="commit-body">
-          <button className="btn-link small" onClick={() => setShowBody((s) => !s)}>
-            {showBody ? 'Hide description' : 'Show description'}
-          </button>
-          {showBody && <pre>{commit.body}</pre>}
-        </div>
-      )}
-      <div className="commit-notes">
-        {(commitNotes.length > 0 || draftHere) && <NoteThread notes={commitNotes} draft={draftHere} />}
-        {!draftHere && (
-          <button
-            className="btn-link small"
-            onClick={() => setDraft({ commitKey: key, path: null, side: 'New', line: null, endLine: null, viewId: 'commit' })}
-          >
-            💬 Add a note on this {commit ? 'commit' : 'review'}
-          </button>
+      <div className="commit-details">
+        {commit ? (
+          <div className="muted small">
+            <span className="mono copyable" title="Click to copy SHA" onClick={() => navigator.clipboard?.writeText(commit.sha)}>
+              {shortSha(commit.sha)}
+            </span>{' '}
+            · {commit.authorName} &lt;{commit.authorEmail}&gt; · {new Date(commit.authorDate).toLocaleString()} ·{' '}
+            <span className="add">+{commit.additions}</span> <span className="del">−{commit.deletions}</span> in {commit.fileCount} file
+            {commit.fileCount === 1 ? '' : 's'}
+          </div>
+        ) : key === SINCE && review.previousHead ? (
+          <>
+            <div className="muted small">
+              <span className="mono">{shortSha(review.previousHead.headSha)}</span> → <span className="mono">{shortSha(review.headSha)}</span>
+              {fileList ? ` · ${fileList.length} files` : ''} · only files this review touches (changes that came from the base branch are left
+              out)
+            </div>
+            {changedCommits.length > 0 ? (
+              <div className="since-commits">
+                {changedCommits.map((c) => (
+                  <button key={c.sha} className="chip" onClick={() => selectCommit(c.sha)} title={c.subject}>
+                    <span className={`change-badge change-${c.sinceLastReview!.toLowerCase()}`}>{c.sinceLastReview === 'New' ? 'new' : 'changed'}</span>
+                    {c.subject}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="muted small">No commits were added or rewritten — the branch was only rebased.</div>
+            )}
+          </>
+        ) : (
+          <div className="muted small">
+            <span className="mono">{review.baseRef}</span> ({shortSha(review.mergeBaseSha)}) → <span className="mono">{review.headRef}</span> (
+            {shortSha(review.headSha)}) · {commitKeys.length} commits{fileList ? ` · ${fileList.length} files` : ''}
+          </div>
         )}
+        {commit?.body && (
+          <div className="commit-body">
+            <button className="btn-link small" onClick={() => setShowBody((s) => !s)}>
+              {showBody ? 'Hide description' : 'Show description'}
+            </button>
+            {showBody && <pre>{commit.body}</pre>}
+          </div>
+        )}
+        <div className="commit-notes">
+          {(commitNotes.length > 0 || draftHere) && <NoteThread notes={commitNotes} draft={draftHere} />}
+          {!draftHere && (
+            <button
+              className="btn-link small"
+              onClick={() => setDraft({ commitKey: key, path: null, side: 'New', line: null, endLine: null, viewId: 'commit' })}
+            >
+              💬 Add a note on this {commit ? 'commit' : 'review'}
+            </button>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 

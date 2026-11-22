@@ -51,7 +51,8 @@ function ReviewWorkspace() {
 
   const scrollToFile = useCallback((path: string) => {
     const el = mainRef.current?.querySelector<HTMLElement>(`.file-card[data-path="${CSS.escape(path)}"]`);
-    if (el && mainRef.current) mainRef.current.scrollTo({ top: el.offsetTop - 8 });
+    // scroll-margin-top on .file-card keeps it clear of the sticky commit bar.
+    el?.scrollIntoView({ block: 'start' });
   }, []);
 
   const markAndNext = useCallback(async () => {
@@ -142,7 +143,9 @@ function ReviewWorkspace() {
     const onScroll = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        const top = el.getBoundingClientRect().top + 80;
+        // The file whose card is just below the sticky commit bar is the "current" one.
+        const bar = parseFloat(getComputedStyle(el).getPropertyValue('--commit-bar-h')) || 0;
+        const top = el.getBoundingClientRect().top + bar + 48;
         const cards = el.querySelectorAll<HTMLElement>('.file-card');
         for (const c of cards) {
           if (c.getBoundingClientRect().bottom > top) {
