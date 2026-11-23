@@ -1,11 +1,12 @@
-import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { anchorFor, anchorKey, basename, hiddenLinesBefore, linesText, noteAnchorKey, toSplitRows, type LineAnchor } from '../lib/diff';
 import { highlightFile, highlightLine, languageFor, type HighlightedFile } from '../lib/highlight';
 import { hunkRanges, isHunkReviewed, parseRanges } from '../lib/ranges';
-import { notesFor, useSession, type NoteDraft } from '../lib/session';
-import { isSpecialKey, type DiffHunk, type DiffLine, type FileDiff, type LaterChange, type MovedBlock, type NoteFollowUp, type ReviewNote } from '../lib/types';
+import { notesFor, useSession, type JumpOrigin, type NoteDraft } from '../lib/session';
+import { isSpecialKey, type DiffHunk, type DiffLine, type DiffSide, type FileDiff, type LaterChange, type MovedBlock, type NoteFollowUp, type ReviewNote } from '../lib/types';
 import { markRanges, wordDiff, type Range } from '../lib/worddiff';
 import { KindBadge, NoteCard, NoteThread } from './Notes';
+import { LaterChangePeek } from './Peek';
 
 /** Jumps already scrolled to, so remounting a view doesn't scroll again. */
 const handledJumps = new Set<number>();
@@ -26,6 +27,10 @@ interface Props {
   plain?: boolean;
   /** The diff shown is from a previous request (a newer one is loading). */
   stale?: boolean;
+  /** Embedded preview (e.g. a peek): no hunk review controls, expanders or file-level notes. */
+  compact?: boolean;
+  /** A line to highlight, e.g. the one a peek is about. */
+  focus?: { side: DiffSide; line: number };
 }
 
 interface MovedInfo {
@@ -41,7 +46,7 @@ interface Decorations {
   later?: LaterChange;
 }
 
-export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plain, stale }: Props) {
+export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plain, stale, compact, focus }: Props) {
   const session = useSession();
   const { review, ui, draft, setDraft, jump, jumpTo } = session;
   const lang = useMemo(() => languageFor(path), [path]);
@@ -198,18 +203,19 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
 
   const getLineText = (d: NoteDraft) => (d.line == null ? null : linesText(diff, d.side, d.line, d.endLine ?? d.line));
 
-  // Scroll to a jump target (from the notes panel, a moved-code link or a later-change marker).
+  // Scroll to a jump target (from the notes panel, a moved-code link, a later-change marker or "Back").
+  // The highlight lives in state (not a DOM class) so re-renders while data loads don't wipe it.
+  const [flash, setFlash] = useState<string | null>(null);
   useEffect(() => {
     if (stale || !jump || handledJumps.has(jump.nonce) || jump.commitKey !== commitKey || jump.path !== path || jump.line == null || !tableRef.current) return;
     const key = `${jump.side ?? 'New'}:${jump.line}`;
     const row = tableRef.current.querySelector<HTMLElement>(`tr[data-anchor="${key}"], tr[data-anchor-old="${key}"]`);
-    if (row) {
-      handledJumps.add(jump.nonce);
-      row.scrollIntoView({ block: 'center' });
-      row.classList.remove('flash');
-      void row.offsetWidth;
-      row.classList.add('flash');
-    }
+    if (!row) return;
+    handledJumps.add(jump.nonce);
+    row.scrollIntoView({ block: 'center' });
+    setFlash(key);
+    const t = window.setTimeout(() => setFlash(null), 1800);
+    return () => window.clearTimeout(t);
   }, [jump, commitKey, path, stale, diff]);
 
   if (diff.isBinary) return <div className="diff-message">Binary file — not shown.</div>;
@@ -244,11 +250,33 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
     );
   };
 
-  const goMoved = (m: MovedInfo) =>
+  // Links remember where they were clicked, so the reviewer can come back ("← Back").
+  const here = (line: DiffLine): JumpOrigin => {
+    const a = anchorFor(line);
+    return { commitKey, path, side: a.side, line: a.line };
+  };
+  const goMoved = (m: MovedInfo, line: DiffLine) =>
     m.dir === 'out'
-      ? jumpTo({ commitKey, path: m.block.toPath, side: 'New', line: m.block.toStart })
-      : jumpTo({ commitKey, path: m.block.fromPath, side: 'Old', line: m.block.fromStart });
-  const goLater = (c: LaterChange) => jumpTo({ commitKey: c.commitSha, path, side: 'Old', line: c.oldLine });
+      ? jumpTo({ commitKey, path: m.block.toPath, side: 'New', line: m.block.toStart }, here(line))
+      : jumpTo({ commitKey, path: m.block.fromPath, side: 'Old', line: m.block.fromStart }, here(line));
+  const goLater = (c: LaterChange, line: DiffLine) => jumpTo({ commitKey: c.commitSha, path, side: 'Old', line: c.oldLine }, here(line));
+
+  // ---- Peeking at a later change in place ----
+  const [peek, setPeek] = useState<{ line: number; change: LaterChange } | null>(null);
+  const onLaterClick = (e: ReactMouseEvent, c: LaterChange, line: DiffLine) => {
+    if (e.ctrlKey || e.metaKey) return goLater(c, line);
+    setPeek((p) => (p?.line === line.newLine ? null : { line: line.newLine!, change: c }));
+  };
+  const peekRow = (line: DiffLine | null | undefined, key: string): ReactNode =>
+    peek && line?.type === 'Add' && line.newLine === peek.line ? (
+      <tr key={key} className="peek-row">
+        <td colSpan={split ? 4 : plain ? 2 : 3}>
+          <LaterChangePeek change={peek.change} fromCommit={commitKey} path={path} line={peek.line} viewId={viewId} onClose={() => setPeek(null)} />
+        </td>
+      </tr>
+    ) : null;
+  const isFocus = (line: DiffLine | null | undefined) =>
+    !!(focus && line && (focus.side === 'Old' ? line.type !== 'Add' && line.oldLine === focus.line : line.type !== 'Delete' && line.newLine === focus.line));
 
   const badges = (line: DiffLine): ReactNode => {
     const d = decorations.get(line);
@@ -258,7 +286,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
       const b = d.moved.block;
       const target = d.moved.dir === 'out' ? `${b.toPath === path ? '' : basename(b.toPath)}:${b.toStart}` : `${b.fromPath === (diff.oldPath ?? path) ? '' : basename(b.fromPath)}:${b.fromStart}`;
       out.push(
-        <button key="m" className="chip moved-chip" onClick={() => goMoved(d.moved!)} title={`${b.toEnd - b.toStart + 1} lines moved ${d.moved.dir === 'out' ? 'to' : 'from'} ${d.moved.dir === 'out' ? b.toPath : b.fromPath}`}>
+        <button key="m" className="chip moved-chip" onClick={() => goMoved(d.moved!, line)} title={`${b.toEnd - b.toStart + 1} lines moved ${d.moved.dir === 'out' ? 'to' : 'from'} ${d.moved.dir === 'out' ? b.toPath : b.fromPath}`}>
           {d.moved.dir === 'out' ? '⇢ moved to' : '⇠ moved from'} {target.startsWith(':') ? `line ${target.slice(1)}` : target}
         </button>,
       );
@@ -270,7 +298,12 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
       const n = commitNumber.get(d.later.commitSha);
       const subject = review.commits.find((c) => c.sha === d.later!.commitSha)?.subject ?? '';
       out.push(
-        <button key="l" className="chip later-chip" onClick={() => goLater(d.later!)} title={`Changed again in commit ${n}: ${subject}`}>
+        <button
+          key="l"
+          className={`chip later-chip ${peek?.line === line.newLine ? 'active' : ''}`}
+          onClick={(e) => onLaterClick(e, d.later!, line)}
+          title={`Changed again in commit ${n}: ${subject}\nClick to peek here · Ctrl+click to go to commit ${n}`}
+        >
           ↻ {n}
         </button>,
       );
@@ -301,7 +334,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
         <tr key={`h${hi}`} className={`hunk-row ${done ? 'hunk-done' : ''}`}>
           <td colSpan={cols}>
             <div className="hunk-bar">
-              {hidden > 0 && !isFull && onExpand ? (
+              {hidden > 0 && !isFull && onExpand && !compact ? (
                 <button className="expand" onClick={onExpand} title="Show the full file">
                   ⋯ {hidden} unchanged line{hidden === 1 ? '' : 's'}
                 </button>
@@ -329,7 +362,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
                   hide
                 </button>
               )}
-              {reviewable && changes > 0 && (
+              {reviewable && changes > 0 && !compact && (
                 <label className="hunk-check" title="Mark just this part of the file as reviewed">
                   <input type="checkbox" checked={done} onChange={() => toggleHunk(hi)} /> {done ? 'Reviewed' : 'Hunk reviewed'}
                 </label>
@@ -353,7 +386,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
       rendered++;
       const a = anchorFor(line);
       const key = anchorKey(a);
-      const cls = `line ${line.type.toLowerCase()} ${inDraft(a) ? 'selected' : ''} ${lineClass(line)}`;
+      const cls = `line ${line.type.toLowerCase()} ${inDraft(a) ? 'selected' : ''} ${lineClass(line)} ${isFocus(line) ? 'peek-target' : ''} ${flash === key ? 'flash' : ''}`;
       rows.push(
         <tr key={`${hi}-${li}`} className={cls} data-anchor={key}>
           {!plain && <td className="ln">{line.oldLine ?? ''}</td>}
@@ -369,6 +402,8 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
           </tr>,
         );
       }
+      const p = peekRow(line, `${hi}-${li}-p`);
+      if (p) rows.push(p);
     });
   }
 
@@ -385,7 +420,12 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
       // Deleted lines are addressable by their old-side anchor too (for jumps to "Old:n").
       const anchorAttr = !isContext && la && !ra ? anchorKey(la) : ra ? anchorKey(ra) : la ? anchorKey(la) : undefined;
       rows.push(
-        <tr key={`${hi}-${ri}`} className={`line split ${isContext ? 'context' : ''}`} data-anchor={anchorAttr} data-anchor-old={la && !isContext ? anchorKey(la) : undefined}>
+        <tr
+          key={`${hi}-${ri}`}
+          className={`line split ${isContext ? 'context' : ''} ${isFocus(row.left) || isFocus(row.right) ? 'peek-target' : ''} ${
+            flash && (flash === anchorAttr || (la && !isContext && flash === anchorKey(la))) ? 'flash' : ''
+          }`}
+          data-anchor={anchorAttr} data-anchor-old={la && !isContext ? anchorKey(la) : undefined}>
           <td className={`ln ${row.left ? (isContext ? '' : 'delete') : 'empty'}`}>{row.left?.oldLine ?? ''}</td>
           {row.left ? (
             <CodeCell
@@ -430,13 +470,15 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
           </tr>,
         );
       }
+      const p = peekRow(row.right, `${hi}-${ri}-p`);
+      if (p) rows.push(p);
     });
   }
 
   const last = diff.hunks[diff.hunks.length - 1];
   return (
     <div className={`diff ${ui.wrap ? 'wrap' : ''}`}>
-      <FileLevelNotes notes={unplaced} carried={unplacedCarried} viewId={viewId} commitKey={commitKey} path={path} />
+      {!compact && <FileLevelNotes notes={unplaced} carried={unplacedCarried} viewId={viewId} commitKey={commitKey} path={path} />}
       <div className="diff-scroll">
         <table ref={tableRef} className={`diff-table ${split ? 'split' : 'unified'} ${plain ? 'plain' : ''}`}>
           <colgroup>
@@ -468,7 +510,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
                 </td>
               </tr>
             )}
-            {remaining === 0 && !plain && !isFull && onExpand && last && diff.status !== 'Deleted' && diff.status !== 'Added' && (
+            {remaining === 0 && !plain && !compact && !isFull && onExpand && last && diff.status !== 'Deleted' && diff.status !== 'Added' && (
               <tr className="hunk-row">
                 <td colSpan={cols}>
                   <button className="expand" onClick={onExpand}>
@@ -590,7 +632,12 @@ function CarriedNote({ note, followUp }: { note: ReviewNote; followUp: NoteFollo
         </button>
         <button
           className="btn-link"
-          onClick={() => jumpTo({ commitKey: note.commitSha, path: note.filePath ?? null, side: note.side, line: note.endLine ?? note.line })}
+          onClick={() =>
+            jumpTo(
+              { commitKey: note.commitSha, path: note.filePath ?? null, side: note.side, line: note.endLine ?? note.line },
+              { commitKey: followUp.commitSha, path: followUp.path, side: 'Old', line: followUp.endLine },
+            )
+          }
         >
           View original
         </button>

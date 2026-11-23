@@ -55,6 +55,9 @@ export interface JumpTarget {
   nonce: number;
 }
 
+/** A place to come back to after following a link elsewhere in the review. */
+export type JumpOrigin = Omit<JumpTarget, 'nonce'>;
+
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 interface SessionValue {
@@ -99,7 +102,11 @@ interface SessionValue {
   refresh: () => Promise<void>;
 
   jump: JumpTarget | null;
-  jumpTo: (t: Omit<JumpTarget, 'nonce'>) => void;
+  /** Navigates to a spot. Pass `from` to remember where the reviewer was, so they can come back. */
+  jumpTo: (t: Omit<JumpTarget, 'nonce'>, from?: JumpOrigin) => void;
+  /** Places to go back to, most recent last. */
+  backStack: JumpOrigin[];
+  goBack: () => void;
 
   openPane: (spec: Omit<PaneSpec, 'id'>, opts?: { newPane?: boolean }) => void;
 }
@@ -132,6 +139,7 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
   const [filesByKey, setFilesByKey] = useState<Record<string, ChangedFile[]>>({});
   const [draft, setDraft] = useState<NoteDraft | null>(null);
   const [jump, setJump] = useState<JumpTarget | null>(null);
+  const [backStack, setBackStack] = useState<JumpOrigin[]>([]);
   const [movedByKey, setMovedByKey] = useState<Record<string, MovedBlock[]>>({});
   const [followUps, setFollowUps] = useState<NoteFollowUp[]>([]);
   const pendingMoved = useRef(new Set<string>());
@@ -390,7 +398,7 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
     });
   }, [reviewId, track, review.previousHead?.recordedAt]);
 
-  const jumpTo = useCallback(
+  const navigate = useCallback(
     (t: Omit<JumpTarget, 'nonce'>) => {
       setUiState((prev) => ({
         ...prev,
@@ -406,6 +414,23 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
     },
     [],
   );
+
+  const jumpTo = useCallback(
+    (t: Omit<JumpTarget, 'nonce'>, from?: JumpOrigin) => {
+      if (from) setBackStack((s) => [...s, from].slice(-25));
+      navigate(t);
+    },
+    [navigate],
+  );
+
+  const backRef = useRef(backStack);
+  backRef.current = backStack;
+  const goBack = useCallback(() => {
+    const origin = backRef.current[backRef.current.length - 1];
+    if (!origin) return;
+    setBackStack((s) => s.slice(0, -1));
+    navigate(origin);
+  }, [navigate]);
 
   const openPane = useCallback((spec: Omit<PaneSpec, 'id'>, opts?: { newPane?: boolean }) => {
     setUiState((prev) => {
@@ -448,6 +473,8 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
     refresh,
     jump,
     jumpTo,
+    backStack,
+    goBack,
     openPane,
   };
 

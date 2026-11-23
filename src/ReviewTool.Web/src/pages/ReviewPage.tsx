@@ -98,6 +98,7 @@ function ReviewWorkspace() {
         i: () => setUi({ ignoreWhitespace: !ui.ignoreWhitespace }),
         d: () => setUi({ showLater: !ui.showLater }),
         s: () => review.previousHead && selectCommit(SINCE),
+        b: () => session.goBack(),
         o: () => setDialog('browse'),
         c: () => setDraft({ commitKey: ui.commitKey, path: null, side: 'New', line: null, endLine: null, viewId: 'commit' }),
         N: () => setUi({ notesOpen: !ui.notesOpen }),

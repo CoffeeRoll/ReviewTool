@@ -13,7 +13,13 @@ export function neighbours(keys: string[], key: string): { prev: string | null; 
 }
 
 export function CommitHeader({ onMarkAndNext }: { onMarkAndNext: () => void }) {
-  const { review, ui, commitKeys, selectCommit, files, draft, setDraft } = useSession();
+  const { review, ui, commitKeys, selectCommit, files, draft, setDraft, backStack, goBack } = useSession();
+  const back = backStack[backStack.length - 1];
+  const backLabel = back
+    ? `${back.commitKey === RANGE ? 'all changes' : back.commitKey === SINCE ? 'since last review' : `commit ${commitKeys.indexOf(back.commitKey) + 1}`}${
+        back.path ? ` · ${basename(back.path)}${back.line ? `:${back.line}` : ''}` : ''
+      }`
+    : '';
   const [showBody, setShowBody] = useState(true);
   const key = ui.commitKey;
   const idx = commitKeys.indexOf(key);
@@ -68,6 +74,11 @@ export function CommitHeader({ onMarkAndNext }: { onMarkAndNext: () => void }) {
           <h2 title={title}>{title}</h2>
         </div>
         <div className="commit-nav">
+          {back && (
+            <button className="btn back-btn" onClick={goBack} title="Go back to where you were before following a link (b)">
+              ← Back to {backLabel}
+            </button>
+          )}
           <button className="btn" disabled={!prev} onClick={() => prev && selectCommit(prev)} title="Previous commit (p)">
             ← Prev
           </button>
@@ -201,7 +212,9 @@ export function NotesPanel({ onClose, onExport }: { onClose: () => void; onExpor
               <button
                 key={n.id}
                 className={`note-link ${n.resolved ? 'resolved' : ''}`}
-                onClick={() => jumpTo({ commitKey: n.commitSha, path: n.filePath ?? null, side: n.side, line: n.endLine ?? n.line })}
+                onClick={() =>
+                  jumpTo({ commitKey: n.commitSha, path: n.filePath ?? null, side: n.side, line: n.endLine ?? n.line }, { commitKey: ui.commitKey, path: ui.currentFile ?? null })
+                }
               >
                 <span className="note-link-head">
                   <KindBadge kind={n.kind} />

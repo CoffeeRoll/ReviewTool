@@ -32,6 +32,14 @@ public sealed record ReviewPatch(string? Name, string? Summary, ReviewStatus? St
 /// <param name="OldLine">The line's number on the old side of <paramref name="CommitSha"/>'s diff.</param>
 public sealed record LaterChange(int Line, string CommitSha, int OldLine);
 
+/// <summary>
+/// Where some lines of a commit's version of a file ended up in the review's final (head) version.
+/// When the lines survive unchanged, <paramref name="StartLine"/>..<paramref name="EndLine"/> are those lines.
+/// Otherwise it is the region of the final file between the nearest surrounding lines that did survive —
+/// i.e. what replaced them. EndLine &lt; StartLine means they were removed with nothing in their place.
+/// </summary>
+public sealed record FinalLocation(string Path, int StartLine, int EndLine, bool Unchanged);
+
 /// <summary>A note whose code is changed by a later commit, and where it lands in that commit's diff (old side).</summary>
 public sealed record NoteFollowUp(string NoteId, string CommitSha, string Path, int Line, int EndLine, int ChangedLines, int TotalLines);
 
@@ -294,6 +302,50 @@ public sealed class ReviewService(IReviewStore store, GitRunner git)
         var review = await GetAsync(id, ct);
         var repo = await OpenRepoAsync(review.RepoPath, ct);
         return await GetLaterChangesAsync(review, repo, commitKey, path);
+    }
+
+    /// <summary>Finds where lines of a commit's version of a file are in the final version (see <see cref="FinalLocation"/>).</summary>
+    public async Task<FinalLocation?> GetFinalLocationAsync(string id, string commitKey, string path, int line, int? endLine, CancellationToken ct = default)
+    {
+        if (line < 1 || endLine < line) throw new ReviewValidationException("Invalid line range.");
+        var end = endLine ?? line;
+        var review = await GetAsync(id, ct);
+        // The combined and since-last-review views already show the final version on their new side.
+        if (Review.IsSpecialKey(commitKey) || commitKey == review.HeadSha) return new FinalLocation(path, line, end, true);
+        if (review.FindCommit(commitKey) is not { Outdated: false }) throw new ReviewValidationException($"Commit {commitKey} is not part of this review.");
+
+        var repo = await OpenRepoAsync(review.RepoPath, ct);
+        Dictionary<int, ReverseBlameLine> blame;
+        try
+        {
+            blame = (await _blameCache.GetOrAdd($"{repo.Path}|{commitKey}|{review.HeadSha}|{path}",
+                () => repo.ReverseBlameAsync(commitKey, review.HeadSha, path, CancellationToken.None))).ToDictionary(b => b.Line);
+        }
+        catch (GitException)
+        {
+            return null; // the file doesn't exist at that commit
+        }
+
+        int? AtHead(int l) => blame.TryGetValue(l, out var b) && b.LastSeenSha == review.HeadSha ? b.LastSeenLine : null;
+
+        var mapped = Enumerable.Range(line, end - line + 1).Select(AtHead).ToList();
+        if (mapped.All(m => m != null) && mapped[^1] - mapped[0] == end - line)
+            return new FinalLocation(path, mapped[0]!.Value, mapped[^1]!.Value, true);
+
+        // Anchor on the closest surviving lines around the range; what lies between them is the replacement.
+        int? above = null, below = null;
+        for (var l = line - 1; l >= 1 && above == null; l--) above = AtHead(l);
+        var maxLine = blame.Count == 0 ? end : blame.Keys.Max();
+        for (var l = end + 1; l <= maxLine && below == null; l++) below = AtHead(l);
+        if (above == null && below == null && blame.Values.All(b => b.LastSeenSha != review.HeadSha))
+        {
+            // Nothing from this version survives: the file was rewritten or removed by the end.
+            var headFiles = await repo.ListTreeAsync(review.HeadSha, ct);
+            if (!headFiles.Contains(path)) return null;
+        }
+        var start = (above ?? 0) + 1;
+        var stop = below.HasValue ? below.Value - 1 : int.MaxValue;
+        return new FinalLocation(path, start, stop, false);
     }
 
     private async Task<List<LaterChange>> GetLaterChangesAsync(Review review, GitRepository repo, string commitKey, string path)

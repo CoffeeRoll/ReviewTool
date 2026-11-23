@@ -65,6 +65,14 @@ export interface NoteFollowUp {
   totalLines: number;
 }
 
+/** Where lines of a commit's version ended up in the final version (endLine < startLine: removed). */
+export interface FinalLocation {
+  path: string;
+  startLine: number;
+  endLine: number;
+  unchanged: boolean;
+}
+
 export interface FileHistoryEntry {
   sha: string;
   path: string;

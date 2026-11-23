@@ -6,6 +6,7 @@ import type {
   DiffSide,
   FileDiff,
   FileHistoryEntry,
+  FinalLocation,
   LaterChange,
   MovedBlock,
   NoteFollowUp,
@@ -88,6 +89,8 @@ export const api = {
     request<MovedBlock[]>('GET', `/reviews/${enc(id)}/commits/${enc(commit)}/moved${q({ ignoreWhitespace: ignoreWhitespace || undefined })}`),
   laterChanges: (id: string, commit: string, path: string) =>
     request<LaterChange[]>('GET', `/reviews/${enc(id)}/commits/${enc(commit)}/later-changes${q({ path })}`),
+  finalLocation: (id: string, commit: string, path: string, line: number, endLine?: number) =>
+    request<FinalLocation>('GET', `/reviews/${enc(id)}/commits/${enc(commit)}/final-location${q({ path, line, endLine })}`),
   followUps: (id: string) => request<NoteFollowUp[]>('GET', `/reviews/${enc(id)}/followups`),
   fileHistory: (id: string, path: string) => request<FileHistoryEntry[]>('GET', `/reviews/${enc(id)}/file-history${q({ path })}`),
   setLinesReviewed: (id: string, commit: string, path: string, ranges: string[], reviewed: boolean) =>

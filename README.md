@@ -39,7 +39,15 @@ specific lines. Your progress is saved, so you can stop and pick the review up a
 - **Built for going commit by commit.**
   - **↻ Changes again later:** lines added in one commit that a later commit rewrites are marked
     *↻ n* (with n the later commit's number) and dimmed, so you don't pick apart code that gets
-    replaced anyway. Click the marker to jump to that later change. This uses `git blame --reverse`.
+    replaced anyway. This uses `git blame --reverse`.
+    - **Click the marker to peek** without leaving your place. The *Commit n* tab shows the part of that
+      commit that changes the line. The *Final version* tab shows what the code ends up as at the end
+      of the review, or says it was removed.
+    - Markers inside a peek can be clicked too, to follow a line through several rewrites.
+    - Ctrl+click (or *Open commit n* in the peek) goes there instead.
+  - **← Back:** following a link to another commit (markers, *moved* links, note follow-ups, the notes
+    panel) remembers where you were. A *Back* button in the commit bar (or <kbd>b</kbd>) returns you
+    to that line.
   - **Notes follow the code:** if a later commit changes the lines a note is about, the note shows up
     again in that commit, marked *possibly addressed?*, with Resolve and *View original* buttons.
   - **File history pane:** a pane in *History* mode steps through every commit in the review that
@@ -120,6 +128,7 @@ scripts/create-demo-repo.sh /tmp/reviewtool-demo   # then review main ← featur
 | <kbd>i</kbd> | Hide / show whitespace-only changes |
 | <kbd>d</kbd> | Dim lines that a later commit rewrites |
 | <kbd>s</kbd> | Changes since your last review |
+| <kbd>b</kbd> | Back to where you were before following a link |
 | <kbd>o</kbd> | Open any file from the repo |
 | <kbd>c</kbd> | Note on the current commit |
 | <kbd>Shift</kbd>+<kbd>N</kbd> | Notes panel |
@@ -291,6 +300,7 @@ implementation (e.g. a database) in place of the JSON file store.
 | `PUT /api/reviews/{id}/commits/{sha\|range}/reviewed-lines` | `{ path, ranges: ["N12-20", "O5"], reviewed }` (hunk progress) |
 | `GET /api/reviews/{id}/commits/{sha\|range}/moved` | Moved-code blocks |
 | `GET /api/reviews/{id}/commits/{sha}/later-changes?path=` | Lines a later commit rewrites |
+| `GET /api/reviews/{id}/commits/{sha}/final-location?path=&line=&endLine=` | Where lines ended up in the final version |
 | `GET /api/reviews/{id}/followups` · `GET /api/reviews/{id}/file-history?path=` | Notes to revisit · a file's commits |
 | `POST /api/reviews/{id}/notes` · `PATCH/DELETE .../notes/{noteId}` | Notes |
 | `GET /api/reviews/{id}/export.md` | Markdown export |

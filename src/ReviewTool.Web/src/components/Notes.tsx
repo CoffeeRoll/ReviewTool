@@ -79,7 +79,12 @@ export function NoteCard({ note, compact }: { note: ReviewNote; compact?: boolea
       {followUp && !note.resolved && (
         <button
           className="btn-link small followup-link"
-          onClick={() => jumpTo({ commitKey: followUp.commitSha, path: followUp.path, side: 'Old', line: followUp.endLine })}
+          onClick={() =>
+            jumpTo(
+              { commitKey: followUp.commitSha, path: followUp.path, side: 'Old', line: followUp.endLine },
+              { commitKey: note.commitSha, path: note.filePath ?? null, side: note.side, line: note.endLine ?? note.line },
+            )
+          }
         >
           ↻ This code changes again in commit {review.commits.filter((c) => !c.outdated).findIndex((c) => c.sha === followUp.commitSha) + 1} — see whether
           it's addressed →

@@ -1909,3 +1909,85 @@ textarea:focus {
 .publish-empty p {
   margin: 4px 0;
 }
+
+/* ---------- Peek at a later change ---------- */
+.peek-row > td {
+  padding: 6px 10px 10px 52px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--sans);
+  white-space: normal;
+}
+.diff-table.split .peek-row > td {
+  padding-left: 10px;
+}
+.peek {
+  border: 1px solid var(--later);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  max-width: 1100px;
+}
+.peek-head,
+.peek-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.peek-head {
+  background: var(--later-bg);
+  border-bottom: 1px solid var(--border);
+}
+.peek-foot {
+  border-top: 1px solid var(--border);
+}
+.peek-title strong {
+  color: var(--later);
+}
+.peek-body {
+  max-height: 420px;
+  overflow: auto;
+}
+.peek-body .diff .diff-scroll {
+  overflow-x: auto;
+}
+.peek-caption {
+  padding: 6px 12px;
+}
+.line.peek-target .code,
+.line.peek-target .ln {
+  box-shadow: inset 0 1px 0 var(--later), inset 0 -1px 0 var(--later);
+}
+.line.peek-target .ln:first-child {
+  box-shadow: inset 3px 0 0 var(--later), inset 0 1px 0 var(--later), inset 0 -1px 0 var(--later);
+}
+.final-table .final-region .code,
+.final-table .final-region .ln {
+  background: var(--later-bg);
+}
+.final-table .final-region .ln {
+  box-shadow: inset 3px 0 0 var(--later);
+}
+.removed-marker td {
+  background: var(--del-bg);
+  color: var(--muted);
+  font: italic 12px var(--sans);
+  padding: 2px 12px;
+}
+.later-chip.active {
+  outline: 2px solid var(--later);
+  outline-offset: 1px;
+}
+.back-btn {
+  border-color: var(--later);
+  color: var(--later);
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

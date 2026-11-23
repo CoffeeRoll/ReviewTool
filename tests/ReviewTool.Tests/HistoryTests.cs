@@ -176,3 +176,61 @@ public class HistoryTests : IDisposable
         Assert.Equal(("m1.txt", 2, 5, "m2.txt", 2, 5), (block.FromPath, block.FromStart, block.FromEnd, block.ToPath, block.ToStart, block.ToEnd));
     }
 }
+
+public class FinalLocationTests : IDisposable
+{
+    private readonly TestRepo _repo = new();
+    private readonly DirectoryInfo _data = Directory.CreateTempSubdirectory("reviewtool-final");
+    private readonly ReviewService _svc;
+
+    public FinalLocationTests()
+    {
+        _svc = new ReviewService(new JsonFileReviewStore(_data.FullName), new GitRunner());
+        _repo.Write("f.txt", "a\nb\n");
+        _repo.Commit("base");
+        _repo.Git("checkout", "-q", "-b", "feat");
+        _repo.Write("f.txt", "a\nb\nc1\nc2\nc3\nc4\n");    // one
+        _repo.Commit("one");
+        _repo.Write("f.txt", "a\nb\nc1\nC2 v2\nc3\nc4\n");  // two: rewrites c2
+        _repo.Commit("two");
+        _repo.Write("f.txt", "top\na\nb\nc1\nC2 v3\nC2 extra\nc4\n"); // three: rewrites again, drops c3, adds a line on top
+        _repo.Commit("three");
+    }
+
+    public void Dispose()
+    {
+        _repo.Dispose();
+        _data.Delete(true);
+    }
+
+    [Fact]
+    public async Task FollowsALineToItsFinalVersionThroughSeveralRewrites()
+    {
+        var review = await _svc.CreateAsync(new CreateReviewRequest(_repo.Path, "main", "feat"));
+        var one = review.Commits[0].Sha;
+
+        // c2 (line 4 in "one") was rewritten twice and c3 removed: the replacement is what sits
+        // between the surviving neighbours c1 and c4 at head (lines 5-6: "C2 v3", "C2 extra").
+        var loc = await _svc.GetFinalLocationAsync(review.Id, one, "f.txt", 4, null);
+        Assert.Equal(new FinalLocation("f.txt", 5, 6, false), loc);
+
+        // c1 survived, shifted down by the line added on top.
+        Assert.Equal(new FinalLocation("f.txt", 4, 4, true), await _svc.GetFinalLocationAsync(review.Id, one, "f.txt", 3, null));
+
+        // The combined view is already the final version.
+        Assert.Equal(new FinalLocation("f.txt", 2, 3, true), await _svc.GetFinalLocationAsync(review.Id, Review.RangeKey, "f.txt", 2, 3));
+    }
+
+    [Fact]
+    public async Task ReportsRemovedLinesAsAnEmptyRegion()
+    {
+        _repo.Write("f.txt", "top\na\nb\nc1\nc4\n"); // four: drops the C2 lines entirely
+        _repo.Commit("four");
+        var review = await _svc.CreateAsync(new CreateReviewRequest(_repo.Path, "main", "feat"));
+        var loc = await _svc.GetFinalLocationAsync(review.Id, review.Commits[0].Sha, "f.txt", 4, 5);
+        Assert.NotNull(loc);
+        Assert.False(loc.Unchanged);
+        Assert.True(loc.EndLine < loc.StartLine); // nothing between c1 (line 4) and c4 (line 5)
+        Assert.Equal(5, loc.StartLine);
+    }
+}

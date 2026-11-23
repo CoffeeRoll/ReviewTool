@@ -138,6 +138,8 @@ public static class ReviewToolApi
             svc.GetFileDiffAsync(id, commit, path, oldPath, context ?? 3, ct, ignoreWhitespace ?? false));
         reviews.MapGet("/{id}/commits/{commit}/moved", (string id, string commit, bool? ignoreWhitespace, ReviewService svc, CancellationToken ct) =>
             svc.GetMovedBlocksAsync(id, commit, ignoreWhitespace ?? false, ct));
+        reviews.MapGet("/{id}/commits/{commit}/final-location", async (string id, string commit, string path, int line, int? endLine, ReviewService svc, CancellationToken ct) =>
+            await svc.GetFinalLocationAsync(id, commit, path, line, endLine, ct) is { } loc ? Results.Ok(loc) : Results.NotFound());
         reviews.MapGet("/{id}/commits/{commit}/later-changes", (string id, string commit, string path, ReviewService svc, CancellationToken ct) =>
             svc.GetLaterChangesAsync(id, commit, path, ct));
         reviews.MapPut("/{id}/commits/{commit}/reviewed-lines", (string id, string commit, SetLinesReviewedRequest req, ReviewService svc, CancellationToken ct) =>
