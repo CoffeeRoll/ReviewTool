@@ -32,7 +32,9 @@ try {
     if ($installed) {
         Invoke-Native 'dotnet tool uninstall' { dotnet tool uninstall --global ReviewTool }
     }
-    Invoke-Native 'dotnet tool install' { dotnet tool install --global ReviewTool --add-source artifacts/nupkg }
+    # --source (not --add-source) installs from the local package only: no nuget.org lookup, so it works
+    # offline or behind a firewall, and can't pick up an unrelated "ReviewTool" package from nuget.org.
+    Invoke-Native 'dotnet tool install' { dotnet tool install --global ReviewTool --source artifacts/nupkg }
 
     Write-Host ''
     Write-Host "Done. Run 'reviewtool' inside a git repository (or 'reviewtool --help')."

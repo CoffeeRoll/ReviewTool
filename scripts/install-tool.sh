@@ -12,7 +12,9 @@ dotnet pack src/ReviewTool.Server -c Release -o artifacts/nupkg
 
 echo "==> Installing"
 dotnet tool uninstall --global ReviewTool >/dev/null 2>&1 || true
-dotnet tool install --global ReviewTool --add-source artifacts/nupkg
+# --source (not --add-source) installs from the local package only: no nuget.org lookup, so it works
+# offline or behind a firewall, and can't pick up an unrelated "ReviewTool" package from nuget.org.
+dotnet tool install --global ReviewTool --source artifacts/nupkg
 
 echo
 echo "Done. Run 'reviewtool' inside a git repository (or 'reviewtool --help')."
