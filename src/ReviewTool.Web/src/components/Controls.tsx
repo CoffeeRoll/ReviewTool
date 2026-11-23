@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useReviewedDisplay } from '../lib/prefs';
 import { useSession } from '../lib/session';
 import type { DiffStyle, Layout } from '../lib/types';
 
@@ -152,6 +153,7 @@ export function ViewMenu() {
   const [open, setOpen] = useState(false);
   const [density, setDensity] = useDensity();
   const [brackets, setBrackets] = useBrackets();
+  const [reviewedDisplay, setReviewedDisplay] = useReviewedDisplay();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -192,6 +194,20 @@ export function ViewMenu() {
               </button>
               <button className={density === 'compact' ? 'on' : ''} onClick={() => setDensity('compact')}>
                 Compact
+              </button>
+            </div>
+          </div>
+          <div
+            className="menu-item density-row"
+            title="Show: files and hunks you've reviewed are expanded when you open a commit (ticking one still folds it away). Collapse: they stay folded."
+          >
+            <span>Reviewed changes</span>
+            <div className="seg">
+              <button className={reviewedDisplay === 'show' ? 'on' : ''} onClick={() => setReviewedDisplay('show')}>
+                Show
+              </button>
+              <button className={reviewedDisplay === 'collapse' ? 'on' : ''} onClick={() => setReviewedDisplay('collapse')}>
+                Collapse
               </button>
             </div>
           </div>

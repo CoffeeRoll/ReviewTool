@@ -7,6 +7,13 @@ import { isSpecialKey, type DiffHunk, type DiffLine, type DiffSide, type FileDif
 import { markRanges, wordDiff, type Range } from '../lib/worddiff';
 import { KindBadge, NoteCard, NoteThread } from './Notes';
 import { LaterChangePeek } from './Peek';
+import { useReviewedDisplay } from '../lib/prefs';
+
+const without = (set: Set<number>, value: number) => {
+  const next = new Set(set);
+  next.delete(value);
+  return next;
+};
 
 /** Jumps already scrolled to, so remounting a view doesn't scroll again. */
 const handledJumps = new Set<number>();
@@ -53,7 +60,10 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
   const tableRef = useRef<HTMLTableElement>(null);
   const split = ui.diffStyle === 'split' && !plain;
   const [limit, setLimit] = useState(RENDER_LIMIT);
+  // Reviewed hunks: explicitly opened ones, and ones folded in this view (by ticking them or "hide").
   const [openHunks, setOpenHunks] = useState<Set<number>>(new Set());
+  const [foldedHunks, setFoldedHunks] = useState<Set<number>>(new Set());
+  const [reviewedDisplay] = useReviewedDisplay();
   const isCommit = !isSpecialKey(commitKey);
 
   const notes = useMemo(() => notesFor(review, commitKey, path), [review, commitKey, path]);
@@ -179,11 +189,9 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
     await session.setLinesReviewed(commitKey, path, hunkRanges(hunk), nowReviewed);
     if (nowReviewed && diff.hunks.every((h, i) => i === index || isHunkReviewed(h, reviewedSet) || !h.lines.some((l) => l.type !== 'Context')))
       await session.setReviewed(commitKey, [path], true);
-    setOpenHunks((s) => {
-      const next = new Set(s);
-      next.delete(index);
-      return next;
-    });
+    // Ticking a hunk folds it away so the next one moves up; unticking leaves it open.
+    setOpenHunks((s) => without(s, index));
+    setFoldedHunks((s) => (nowReviewed ? new Set(s).add(index) : without(s, index)));
   };
 
   const myDraft = draft && draft.viewId === viewId && draft.commitKey === commitKey && draft.path === path ? draft : null;
@@ -339,7 +347,8 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
     }
     const hidden = plain ? 0 : hiddenLinesBefore(diff.hunks, hi);
     const done = reviewable && hunkDone(hunk);
-    const collapsed = done && !openHunks.has(hi);
+    // Peeks never fold. Otherwise reviewed hunks fold if the reviewer prefers that, or if they were just ticked/hidden here.
+    const collapsed = !compact && done && !openHunks.has(hi) && (reviewedDisplay === 'collapse' || foldedHunks.has(hi));
     const changes = hunk.lines.filter((l) => l.type !== 'Context').length;
     if (!plain) {
       rows.push(
@@ -360,16 +369,13 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
                   show {changes} reviewed change{changes === 1 ? '' : 's'}
                 </button>
               )}
-              {done && !collapsed && (
+              {done && !collapsed && !compact && (
                 <button
                   className="expand"
-                  onClick={() =>
-                    setOpenHunks((s) => {
-                      const n = new Set(s);
-                      n.delete(hi);
-                      return n;
-                    })
-                  }
+                  onClick={() => {
+                    setOpenHunks((s) => without(s, hi));
+                    setFoldedHunks((s) => new Set(s).add(hi));
+                  }}
                 >
                   hide
                 </button>

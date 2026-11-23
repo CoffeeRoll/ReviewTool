@@ -60,3 +60,32 @@ describe('commitProgress', () => {
     expect(commitProgress({}, 'a', 0).done).toBe(true);
   });
 });
+
+import { trimToChange } from './diff';
+
+describe('trimToChange', () => {
+  // A hunk with two separate change blocks far apart; the line of interest is old line 30.
+  const lines: DiffLine[] = [];
+  let o = 1;
+  let n = 1;
+  for (let i = 0; i < 20; i++) lines.push(ctx(o++, n++));
+  lines.push(del(o++), add(n++)); // first block (old 21)
+  for (let i = 0; i < 8; i++) lines.push(ctx(o++, n++));
+  lines.push(del(o++), del(o++), add(n++)); // second block (old 30, 31)
+  for (let i = 0; i < 20; i++) lines.push(ctx(o++, n++));
+  const hunk = { oldStart: 1, oldCount: o - 1, newStart: 1, newCount: n - 1, header: '', lines } as DiffHunk;
+
+  it('keeps only the change block touching the line, plus context', () => {
+    const { hunk: t, trimmed } = trimToChange(hunk, 30);
+    expect(trimmed).toBe(true);
+    expect(t.lines.map((l) => l.type[0]).join('')).toBe('CCCDDACCC');
+    expect(t.oldStart).toBe(27);
+    expect(t.oldCount).toBe(8);
+    expect(t.newCount).toBe(7);
+  });
+
+  it('leaves small hunks alone', () => {
+    const small = { ...hunk, lines: [ctx(1, 1), del(2), add(2), ctx(3, 3)] } as DiffHunk;
+    expect(trimToChange(small, 2).trimmed).toBe(false);
+  });
+});

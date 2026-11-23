@@ -117,3 +117,45 @@ export function relativeTime(iso: string): string {
   if (diff < 86400 * 30) return `${Math.floor(diff / 86400)}d ago`;
   return new Date(iso).toLocaleDateString();
 }
+
+/** Lines of context kept around the change block in a trimmed peek. */
+const PEEK_CONTEXT = 3;
+/** Longest change block shown before trimming it too. */
+const PEEK_MAX_BLOCK = 30;
+
+/**
+ * Cuts a hunk down to the contiguous block of deletions/additions that includes the given old-side
+ * line, plus a little context. Returns the original hunk (trimmed: false) when it's already small.
+ */
+export function trimToChange(hunk: DiffHunk, oldLine: number): { hunk: DiffHunk; trimmed: boolean } {
+  const lines = hunk.lines;
+  const target = lines.findIndex((l) => l.type !== 'Add' && l.oldLine === oldLine);
+  if (target < 0) return { hunk, trimmed: false };
+  let start = target;
+  let end = target;
+  while (start > 0 && lines[start - 1].type !== 'Context') start--;
+  while (end < lines.length - 1 && lines[end + 1].type !== 'Context') end++;
+  if (end - start + 1 > PEEK_MAX_BLOCK) {
+    // Very large block: keep the part around the target line.
+    start = Math.max(start, target - Math.floor(PEEK_MAX_BLOCK / 2));
+    end = Math.min(end, start + PEEK_MAX_BLOCK - 1);
+  }
+  const from = Math.max(0, start - PEEK_CONTEXT);
+  const to = Math.min(lines.length - 1, end + PEEK_CONTEXT);
+  if (from === 0 && to === lines.length - 1) return { hunk, trimmed: false };
+  const slice = lines.slice(from, to + 1);
+  const firstOld = slice.find((l) => l.oldLine != null)?.oldLine ?? hunk.oldStart;
+  const firstNew = slice.find((l) => l.newLine != null)?.newLine ?? hunk.newStart;
+  return {
+    hunk: {
+      ...hunk,
+      oldStart: firstOld,
+      newStart: firstNew,
+      oldCount: slice.filter((l) => l.type !== 'Add').length,
+      newCount: slice.filter((l) => l.type !== 'Delete').length,
+      lines: slice,
+    },
+    trimmed: true,
+  };
+}
+

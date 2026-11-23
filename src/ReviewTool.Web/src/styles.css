@@ -972,9 +972,14 @@ textarea:focus {
   border-radius: var(--radius) var(--radius) 0 0;
   flex-wrap: wrap;
 }
-.file-card.reviewed .file-card-head {
+/* A collapsed card is just its header. */
+.file-card.collapsed .file-card-head {
   border-bottom-color: transparent;
   border-radius: var(--radius);
+}
+/* Reviewed files stay recognisable when shown expanded. */
+.file-card.reviewed .file-card-head {
+  box-shadow: inset 3px 0 0 var(--ok);
 }
 .file-card.reviewed .file-path {
   opacity: 0.65;
@@ -2119,4 +2124,10 @@ textarea:focus {
 }
 .later-cell .later-chip:hover {
   border-color: var(--later);
+}
+
+.peek-more {
+  display: block;
+  padding: 4px 12px 6px;
+  font-size: 12px;
 }

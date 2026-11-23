@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
-import { basename } from '../lib/diff';
+import { basename, trimToChange } from '../lib/diff';
 import { escapeHtml, highlightFile, languageFor, type HighlightedFile } from '../lib/highlight';
 import { useSession, type JumpOrigin } from '../lib/session';
 import { RANGE, type FileDiff, type FinalLocation, type LaterChange } from '../lib/types';
@@ -73,6 +73,7 @@ export function LaterChangePeek({
 function CommitTab({ change, path, viewId, from, number }: { change: LaterChange; path: string; viewId: string; from: JumpOrigin; number: number }) {
   const { getDiff, jumpTo } = useSession();
   const [diff, setDiff] = useState<FileDiff | 'missing' | null>(null);
+  const [wholeHunk, setWholeHunk] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +89,9 @@ function CommitTab({ change, path, viewId, from, number }: { change: LaterChange
     };
   }, [getDiff, change.commitSha, change.oldLine, path]);
 
+  // A hunk can span most of a file when a commit changes a lot nearby; show just the change touching this line.
+  const shown = useMemo(() => (diff && diff !== 'missing' ? trimToChange(diff.hunks[0], change.oldLine) : null), [diff, change.oldLine]);
+
   return (
     <>
       <div className="peek-body">
@@ -96,7 +100,21 @@ function CommitTab({ change, path, viewId, from, number }: { change: LaterChange
         ) : diff === 'missing' ? (
           <div className="diff-message">Couldn't find this line in commit {number}'s changes (the file may have been renamed).</div>
         ) : (
-          <DiffView viewId={`${viewId}>peek`} commitKey={change.commitSha} path={path} diff={diff} compact focus={{ side: 'Old', line: change.oldLine }} />
+          <>
+            <DiffView
+              viewId={`${viewId}>peek`}
+              commitKey={change.commitSha}
+              path={path}
+              diff={wholeHunk || !shown?.trimmed ? diff : { ...diff, hunks: [shown.hunk] }}
+              compact
+              focus={{ side: 'Old', line: change.oldLine }}
+            />
+            {shown?.trimmed && (
+              <button className="expand peek-more" onClick={() => setWholeHunk((w) => !w)}>
+                {wholeHunk ? '⋯ Show just the change to this line' : `⋯ Show the whole hunk (${diff.hunks[0].lines.length} lines)`}
+              </button>
+            )}
+          </>
         )}
       </div>
       <div className="peek-foot">

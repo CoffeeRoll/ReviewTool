@@ -41,8 +41,8 @@ specific lines. Your progress is saved, so you can stop and pick the review up a
     *↻ n* (with n the later commit's number) and dimmed, so you don't pick apart code that gets
     replaced anyway. The marker sits in a gutter left of the line numbers, so it's always in the same
     place; an orange stripe shows the rest of the affected block. This uses `git blame --reverse`.
-    - **Click the marker to peek** without leaving your place. The *Commit n* tab shows the part of that
-      commit that changes the line. The *Final version* tab shows what the code ends up as at the end
+    - **Click the marker to peek** without leaving your place. The *Commit n* tab shows just the change
+      in that commit that touches the line (with a link to the whole hunk). The *Final version* tab shows what the code ends up as at the end
       of the review, or says it was removed.
     - Markers inside a peek can be clicked too, to follow a line through several rewrites.
     - Ctrl+click (or *Open commit n* in the peek) goes there instead.
@@ -53,8 +53,12 @@ specific lines. Your progress is saved, so you can stop and pick the review up a
     again in that commit, marked *possibly addressed?*, with Resolve and *View original* buttons.
   - **File history pane:** a pane in *History* mode steps through every commit in the review that
     touches a file (following renames).
-  - **Hunk-level progress:** tick *Hunk reviewed* to check off part of a big file; reviewed hunks
-    fold away, and the file is marked reviewed once every hunk is.
+  - **Hunk-level progress:** tick *Hunk reviewed* to check off part of a big file; the file is marked
+    reviewed once every hunk is.
+  - **Reviewed changes** (View menu):
+    - *Show* (default): ticking a file or hunk folds it away so the next one moves up, but when you
+      open a commit again, everything is expanded. Reviewed files keep a green edge, so you can tell.
+    - *Collapse*: reviewed files and hunks stay folded.
 - **Easier diff reading.**
   - The changed words within a line are highlighted.
   - **Hide whitespace changes** (<kbd>i</kbd>) uses git's `-w` option.

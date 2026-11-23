@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { basename, dirname, shortSha } from '../lib/diff';
 import { notesFor, useSession } from '../lib/session';
 import { RANGE, SINCE, isSpecialKey, type BlobContent, type ChangedFile, type ChangeKind, type FileDiff, type FileHistoryEntry, type PaneSpec } from '../lib/types';
+import { useReviewedDisplay } from '../lib/prefs';
 import { DiffView, fileAsDiff } from './DiffView';
 
 export function StatusBadge({ status }: { status: ChangeKind }) {
@@ -67,8 +68,9 @@ function useBlob(commitKey: string, path: string, enabled = true) {
 export function FileCard({ commitKey, file }: { commitKey: string; file: ChangedFile }) {
   const { review, isReviewed, setReviewed, setDraft, openPane, setUi, jump, getLaterChanges, reviewedLines } = useSession();
   const reviewed = isReviewed(commitKey, file.path);
-  // Reviewed and generated files start collapsed.
-  const [collapsed, setCollapsed] = useState(reviewed || file.isGenerated);
+  const [reviewedDisplay] = useReviewedDisplay();
+  // Generated files start collapsed; reviewed ones too if the reviewer prefers that (View → Reviewed changes).
+  const [collapsed, setCollapsed] = useState((reviewed && reviewedDisplay === 'collapse') || file.isGenerated);
   const [laterCount, setLaterCount] = useState(0);
   const partial = !reviewed && (reviewedLines(commitKey, file.path)?.length ?? 0) > 0;
 
@@ -103,17 +105,25 @@ export function FileCard({ commitKey, file }: { commitKey: string; file: Changed
     }
   }, [jump, commitKey, file.path]);
 
-  // Reviewed files collapse (like GitHub's "Viewed"), including when marked from elsewhere.
+  // Ticking "Reviewed" folds the file away (like GitHub's "Viewed") so the next one moves up; unticking opens it.
   const prevReviewed = useRef(reviewed);
   useEffect(() => {
     if (prevReviewed.current === reviewed) return;
     prevReviewed.current = reviewed;
     setCollapsed(reviewed);
   }, [reviewed]);
+
+  // Changing the "Reviewed changes" preference applies to files already on screen.
+  const prevDisplay = useRef(reviewedDisplay);
+  useEffect(() => {
+    if (prevDisplay.current === reviewedDisplay) return;
+    prevDisplay.current = reviewedDisplay;
+    if (reviewed) setCollapsed(reviewedDisplay === 'collapse');
+  }, [reviewedDisplay, reviewed]);
   const toggleReviewed = (value: boolean) => setReviewed(commitKey, [file.path], value);
 
   return (
-    <div className={`file-card ${reviewed ? 'reviewed' : ''}`} ref={ref} data-path={file.path}>
+    <div className={`file-card ${reviewed ? 'reviewed' : ''} ${collapsed ? 'collapsed' : ''}`} ref={ref} data-path={file.path}>
       <div className="file-card-head" onClick={() => setUi({ currentFile: file.path })}>
         <button className="icon-btn chevron" aria-label={collapsed ? 'Expand' : 'Collapse'} onClick={() => setCollapsed((c) => !c)}>
           {collapsed ? '▸' : '▾'}
