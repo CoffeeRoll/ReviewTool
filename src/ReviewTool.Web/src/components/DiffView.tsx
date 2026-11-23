@@ -1,6 +1,6 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { anchorFor, anchorKey, basename, hiddenLinesBefore, linesText, noteAnchorKey, toSplitRows, type LineAnchor } from '../lib/diff';
-import { highlightFile, highlightLine, languageFor, type HighlightedFile } from '../lib/highlight';
+import { escapeHtml, highlightFile, languageFor, type HighlightedFile } from '../lib/highlight';
 import { hunkRanges, isHunkReviewed, parseRanges } from '../lib/ranges';
 import { notesFor, useSession, type JumpOrigin, type NoteDraft } from '../lib/session';
 import { isSpecialKey, type DiffHunk, type DiffLine, type DiffSide, type FileDiff, type LaterChange, type MovedBlock, type NoteFollowUp, type ReviewNote } from '../lib/types';
@@ -566,7 +566,8 @@ const CodeCell = memo(function CodeCell({
   extraClass?: string;
 }) {
   const html = useMemo(() => {
-    const base = baseHtml ?? highlightLine(line.text, lang);
+    // Plain text until the file's highlighting arrives from the worker.
+    const base = baseHtml ?? escapeHtml(line.text);
     return ranges && ranges.length ? markRanges(base, ranges, line.type === 'Delete' ? 'wd wd-del' : 'wd wd-add') : base;
   }, [line.text, line.type, lang, ranges, baseHtml]);
   const sign = line.type === 'Add' ? '+' : line.type === 'Delete' ? '-' : ' ';

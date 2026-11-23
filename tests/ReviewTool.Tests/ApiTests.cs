@@ -26,7 +26,13 @@ public class ApiTests : IClassFixture<ApiTests.Factory>, IDisposable
     private readonly HttpClient _client;
     private readonly TestRepo _repo = TestRepo.WithFeatureBranch();
 
-    public ApiTests(Factory factory) => _client = factory.CreateClient();
+    private readonly Factory _factory;
+
+    public ApiTests(Factory factory)
+    {
+        _factory = factory;
+        _client = factory.CreateClient();
+    }
 
     public void Dispose() => _repo.Dispose();
 
@@ -87,6 +93,16 @@ public class ApiTests : IClassFixture<ApiTests.Factory>, IDisposable
         var commits = await _client.GetFromJsonAsync<JsonArray>($"/api/repo/commits?path={Uri.EscapeDataString(_repo.Path)}&base=main&head=feature");
         Assert.Equal(3, commits!.Count);
     }
+
+    [Fact]
+    public async Task ServesLanguageMappingsForTheUi()
+    {
+        using var configured = factoryWith("ReviewTool:Languages:.props", "xml");
+        var settings = await configured.CreateClient().GetFromJsonAsync<JsonObject>("/api/settings");
+        Assert.Equal("xml", (string)settings!["languages"]![".props"]!);
+    }
+
+    private WebApplicationFactory<Program> factoryWith(string key, string value) => _factory.WithWebHostBuilder(b => b.UseSetting(key, value));
 
     [Fact]
     public async Task UnknownApiRoutesAre404()

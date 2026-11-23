@@ -12,6 +12,11 @@ export default defineConfig({
     emptyOutDir: true,
     chunkSizeWarningLimit: 1500,
   },
+  // ES-module workers can code-split, so each language grammar is its own file, loaded only when a
+  // file in that language is opened (instead of one huge worker bundle).
+  worker: {
+    format: 'es',
+  },
   server: {
     port: 5173,
     proxy: {

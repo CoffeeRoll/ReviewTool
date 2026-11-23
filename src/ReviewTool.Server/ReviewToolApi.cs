@@ -24,6 +24,12 @@ public sealed class ReviewToolOptions
     /// </summary>
     public List<string> AllowedHosts { get; set; } = [];
 
+    /// <summary>
+    /// Extra syntax-highlighting mappings from file name or extension to a language, e.g.
+    /// { ".props": "xml", "Jenkinsfile.ci": "groovy" }. Language names are VS Code / Shiki ids.
+    /// </summary>
+    public Dictionary<string, string> Languages { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public string ResolveDataDirectory()
         => string.IsNullOrWhiteSpace(DataDirectory)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".reviewtool")
@@ -100,6 +106,7 @@ public static class ReviewToolApi
         api.AddEndpointFilter(hostCheck.FilterAsync);
 
         api.MapGet("/health", () => Results.Ok(new { status = "ok", app = "reviewtool", version = Version }));
+        api.MapGet("/settings", (Microsoft.Extensions.Options.IOptions<ReviewToolOptions> o) => Results.Ok(new { languages = o.Value.Languages }));
 
         // ---- Repository helpers (used by the "new review" form) ----
         var repo = api.MapGroup("/repo");

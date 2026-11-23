@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
 import { basename } from '../lib/diff';
-import { highlightFile, highlightLine, languageFor } from '../lib/highlight';
+import { escapeHtml, highlightFile, languageFor, type HighlightedFile } from '../lib/highlight';
 import { useSession, type JumpOrigin } from '../lib/session';
 import { RANGE, type FileDiff, type FinalLocation, type LaterChange } from '../lib/types';
 import { DiffView } from './DiffView';
@@ -113,7 +113,7 @@ function CommitTab({ change, path, viewId, from, number }: { change: LaterChange
 function FinalTab({ fromCommit, path, line, from }: { fromCommit: string; path: string; line: number; from: JumpOrigin }) {
   const { review, getBlob, jumpTo } = useSession();
   const [state, setState] = useState<{ loc: FinalLocation; text: string } | 'gone' | 'error' | null>(null);
-  const lang = useMemo(() => languageFor(path), [path]);
+  const [file, setFile] = useState<HighlightedFile | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -121,7 +121,12 @@ function FinalTab({ fromCommit, path, line, from }: { fromCommit: string; path: 
       .finalLocation(review.id, fromCommit, path, line)
       .then(async (loc) => {
         const blob = await getBlob(RANGE, loc.path, 'New');
-        if (!cancelled) setState(blob.text == null ? 'error' : { loc, text: blob.text });
+        if (cancelled) return;
+        setState(blob.text == null ? 'error' : { loc, text: blob.text });
+        if (blob.text != null) {
+          const highlighted = await highlightFile(blob.text, languageFor(loc.path), `${RANGE}|New|${loc.path}|${blob.sha}`);
+          if (!cancelled) setFile(highlighted);
+        }
       })
       .catch((e: { status?: number }) => !cancelled && setState(e.status === 404 ? 'gone' : 'error'));
     return () => {
@@ -132,7 +137,6 @@ function FinalTab({ fromCommit, path, line, from }: { fromCommit: string; path: 
   const view = useMemo(() => {
     if (!state || typeof state === 'string') return null;
     const { loc, text } = state;
-    const file = highlightFile(text, lang, `${RANGE}|New|${loc.path}|${review.headSha}`);
     const lines = file?.lines ?? text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
     const removed = loc.endLine < loc.startLine;
     const regionEnd = removed ? loc.startLine - 1 : Math.min(loc.endLine, lines.length, loc.startLine + MAX_REGION_LINES - 1);
@@ -141,10 +145,10 @@ function FinalTab({ fromCommit, path, line, from }: { fromCommit: string; path: 
     const last = Math.min(lines.length, regionEnd + (truncated ? 0 : CONTEXT));
     const rows = [];
     for (let n = first; n <= last; n++) {
-      rows.push({ n, html: file?.html[n - 1] ?? highlightLine(lines[n - 1], lang), inRegion: !removed && n >= loc.startLine && n <= regionEnd });
+      rows.push({ n, html: file?.html[n - 1] ?? escapeHtml(lines[n - 1]), inRegion: !removed && n >= loc.startLine && n <= regionEnd });
     }
     return { loc, rows, removed, removedAfter: loc.startLine - 1, truncated };
-  }, [state, lang, review.headSha]);
+  }, [state, file]);
 
   return (
     <>

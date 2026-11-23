@@ -65,6 +65,40 @@ export function applyStoredDensity() {
   else document.documentElement.removeAttribute('data-density');
 }
 
+const BRACKETS_KEY = 'reviewtool.brackets';
+
+function readBrackets(): boolean {
+  try {
+    return localStorage.getItem(BRACKETS_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+/** Applies the saved bracket-colour preference (on by default). */
+export function applyStoredBrackets() {
+  applyStoredBracketsValue(readBrackets());
+}
+
+function useBrackets(): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(readBrackets);
+  const set = (value: boolean) => {
+    setOn(value);
+    try {
+      localStorage.setItem(BRACKETS_KEY, value ? 'on' : 'off');
+    } catch {
+      /* storage unavailable */
+    }
+    applyStoredBracketsValue(value);
+  };
+  return [on, set];
+}
+
+function applyStoredBracketsValue(on: boolean) {
+  if (on) document.documentElement.removeAttribute('data-brackets');
+  else document.documentElement.setAttribute('data-brackets', 'off');
+}
+
 function useDensity(): [Density, (d: Density) => void] {
   const [density, setDensity] = useState<Density>(readDensity);
   const set = (d: Density) => {
@@ -117,6 +151,7 @@ export function ViewMenu() {
   const { ui, setUi } = useSession();
   const [open, setOpen] = useState(false);
   const [density, setDensity] = useDensity();
+  const [brackets, setBrackets] = useBrackets();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -160,6 +195,10 @@ export function ViewMenu() {
               </button>
             </div>
           </div>
+          <label className="menu-item" title="Colour matching ( ) [ ] { } by how deeply they're nested">
+            <input type="checkbox" checked={brackets} onChange={(e) => setBrackets(e.target.checked)} />
+            <span>Bracket colours</span>
+          </label>
           {toggle('Hide whitespace changes', 'ignoreWhitespace', 'Ignore changes that only touch whitespace', 'i')}
           {toggle('Wrap long lines', 'wrap', 'Wrap instead of scrolling horizontally', 'w')}
           {toggle('Dim lines rewritten later', 'showLater', 'Fade added lines that a later commit changes again (they are always marked ↻)', 'd')}

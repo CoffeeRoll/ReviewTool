@@ -35,14 +35,28 @@
   --later: #b35900;
   --later-bg: #fff1e0;
 
-  --hl-keyword: #cf222e;
-  --hl-string: #0a3069;
-  --hl-number: #0550ae;
-  --hl-comment: #6e7781;
-  --hl-title: #8250df;
-  --hl-type: #953800;
-  --hl-attr: #116329;
-  --hl-meta: #0550ae;
+  --tk-keyword: #0550ae;
+  --tk-control: #a626a4;
+  --tk-operator: #c2410c;
+  --tk-function: #6639ba;
+  --tk-type: #1b7c83;
+  --tk-namespace: #1b7c83;
+  --tk-variable: #1f3f77;
+  --tk-parameter: #1f3f77;
+  --tk-property: #2f6f9f;
+  --tk-constant: #0a6e31;
+  --tk-number: #0a6e31;
+  --tk-string: #a31515;
+  --tk-escape: #c25e00;
+  --tk-regex: #811f3f;
+  --tk-comment: #6e7781;
+  --tk-tag: #116329;
+  --tk-attribute: #953800;
+  --tk-punctuation: #57606a;
+  --tk-br0: #0431fa;
+  --tk-br1: #b8860b;
+  --tk-br2: #7b3814;
+  --tk-br-bad: #cf222e;
 
   --shadow: 0 1px 2px rgba(20, 30, 50, 0.06), 0 4px 16px rgba(20, 30, 50, 0.06);
   --radius: 8px;
@@ -85,14 +99,28 @@
     --moved-text: #c4a5ff;
     --later: #f0a050;
     --later-bg: rgba(240, 160, 80, 0.14);
-    --hl-keyword: #ff7b72;
-    --hl-string: #a5d6ff;
-    --hl-number: #79c0ff;
-    --hl-comment: #8b949e;
-    --hl-title: #d2a8ff;
-    --hl-type: #ffa657;
-    --hl-attr: #7ee787;
-    --hl-meta: #79c0ff;
+    --tk-keyword: #569cd6;
+    --tk-control: #c586c0;
+    --tk-operator: #ff7b72;
+    --tk-function: #dcdcaa;
+    --tk-type: #4ec9b0;
+    --tk-namespace: #4ec9b0;
+    --tk-variable: #9cdcfe;
+    --tk-parameter: #9cdcfe;
+    --tk-property: #7cc7ff;
+    --tk-constant: #4fc1ff;
+    --tk-number: #b5cea8;
+    --tk-string: #ce9178;
+    --tk-escape: #d7ba7d;
+    --tk-regex: #d16969;
+    --tk-comment: #8b949e;
+    --tk-tag: #7ee787;
+    --tk-attribute: #ffa657;
+    --tk-punctuation: #a0a8b4;
+    --tk-br0: #ffd700;
+    --tk-br1: #da70d6;
+    --tk-br2: #179fff;
+    --tk-br-bad: #f85149;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.3);
   }
 }
@@ -131,14 +159,28 @@
   --moved-text: #c4a5ff;
   --later: #f0a050;
   --later-bg: rgba(240, 160, 80, 0.14);
-  --hl-keyword: #ff7b72;
-  --hl-string: #a5d6ff;
-  --hl-number: #79c0ff;
-  --hl-comment: #8b949e;
-  --hl-title: #d2a8ff;
-  --hl-type: #ffa657;
-  --hl-attr: #7ee787;
-  --hl-meta: #79c0ff;
+  --tk-keyword: #569cd6;
+  --tk-control: #c586c0;
+  --tk-operator: #ff7b72;
+  --tk-function: #dcdcaa;
+  --tk-type: #4ec9b0;
+  --tk-namespace: #4ec9b0;
+  --tk-variable: #9cdcfe;
+  --tk-parameter: #9cdcfe;
+  --tk-property: #7cc7ff;
+  --tk-constant: #4fc1ff;
+  --tk-number: #b5cea8;
+  --tk-string: #ce9178;
+  --tk-escape: #d7ba7d;
+  --tk-regex: #d16969;
+  --tk-comment: #8b949e;
+  --tk-tag: #7ee787;
+  --tk-attribute: #ffa657;
+  --tk-punctuation: #a0a8b4;
+  --tk-br0: #ffd700;
+  --tk-br1: #da70d6;
+  --tk-br2: #179fff;
+  --tk-br-bad: #f85149;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.3);
 }
 
@@ -1182,51 +1224,85 @@ textarea:focus {
   white-space: normal;
 }
 
-/* highlight.js tokens */
-.hljs-keyword,
-.hljs-selector-tag,
-.hljs-built_in,
-.hljs-literal,
-.hljs-doctag {
-  color: var(--hl-keyword);
+/* Syntax colours (categories from src/lib/syntaxTheme.ts; same for every language) */
+.tk-keyword {
+  color: var(--tk-keyword);
 }
-.hljs-string,
-.hljs-regexp,
-.hljs-template-tag,
-.hljs-addition {
-  color: var(--hl-string);
+.tk-control {
+  color: var(--tk-control);
 }
-.hljs-number,
-.hljs-symbol,
-.hljs-variable.constant_ {
-  color: var(--hl-number);
+.tk-operator {
+  color: var(--tk-operator);
 }
-.hljs-comment,
-.hljs-quote {
-  color: var(--hl-comment);
+.tk-function {
+  color: var(--tk-function);
+}
+.tk-type {
+  color: var(--tk-type);
+}
+.tk-namespace {
+  color: var(--tk-namespace);
+}
+.tk-variable {
+  color: var(--tk-variable);
+}
+.tk-parameter {
+  color: var(--tk-parameter);
+}
+.tk-property {
+  color: var(--tk-property);
+}
+.tk-constant {
+  color: var(--tk-constant);
+}
+.tk-number {
+  color: var(--tk-number);
+}
+.tk-string {
+  color: var(--tk-string);
+}
+.tk-escape {
+  color: var(--tk-escape);
+}
+.tk-regex {
+  color: var(--tk-regex);
+}
+.tk-comment {
+  color: var(--tk-comment);
+}
+.tk-tag {
+  color: var(--tk-tag);
+}
+.tk-attribute {
+  color: var(--tk-attribute);
+}
+.tk-punctuation {
+  color: var(--tk-punctuation);
+}
+.tk-comment,
+.tk-parameter {
   font-style: italic;
 }
-.hljs-title,
-.hljs-title.function_,
-.hljs-section {
-  color: var(--hl-title);
+.tk-emphasis {
+  font-weight: 600;
 }
-.hljs-type,
-.hljs-title.class_,
-.hljs-class .hljs-title {
-  color: var(--hl-type);
+/* Bracket pairs coloured by nesting depth (View → Bracket colours) */
+.br-0 {
+  color: var(--tk-br0);
 }
-.hljs-attr,
-.hljs-attribute,
-.hljs-name,
-.hljs-tag {
-  color: var(--hl-attr);
+.br-1 {
+  color: var(--tk-br1);
 }
-.hljs-meta,
-.hljs-params .hljs-variable,
-.hljs-selector-id,
-.hljs-selector-class {
-  color: var(--hl-meta);
+.br-2 {
+  color: var(--tk-br2);
+}
+.br-bad {
+  color: var(--tk-br-bad);
+  text-decoration: underline wavy;
+}
+:root[data-brackets='off'] .br {
+  color: var(--tk-punctuation);
+  text-decoration: none;
 }
 
 /* ---------- Notes ---------- */

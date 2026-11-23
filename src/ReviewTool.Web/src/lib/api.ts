@@ -70,6 +70,8 @@ export const api = {
   repoCommits: (path: string, base: string, head: string, signal?: AbortSignal) =>
     request<CommitInfo[]>('GET', `/repo/commits${q({ path, base, head })}`, undefined, signal),
 
+  /** Server-side settings the UI needs (e.g. extra file-type → language mappings). */
+  settings: () => request<{ languages: Record<string, string> }>('GET', '/settings'),
   listReviews: () => request<ReviewSummary[]>('GET', '/reviews'),
   createReview: (req: CreateReviewRequest) => request<Review>('POST', '/reviews', req),
   getReview: (id: string) => request<Review>('GET', `/reviews/${enc(id)}`),

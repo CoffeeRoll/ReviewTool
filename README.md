@@ -73,7 +73,16 @@ specific lines. Your progress is saved, so you can stop and pick the review up a
   credentials.
 - **Export.** *Finish* lets you set a status (Approved / Changes requested / …) and an overall
   summary, and exports all notes as Markdown to paste into the PR.
-- Unified or split diffs, syntax highlighting, expand to the full file, line wrapping,
+- **Syntax highlighting for ~200 languages**, using the same grammars as VS Code (via
+  [Shiki](https://shiki.style)).
+  - It colours keywords, control flow, operators, function calls, types, namespaces, variables,
+    parameters, properties, strings and numbers, plus bracket pairs by nesting depth (toggle in the
+    View menu).
+  - Highlighting runs in a background thread on whole files, so multi-line comments and strings are
+    right.
+  - Each language's grammar is downloaded only when you first open a file in it.
+  - Unusual file types can be mapped to a language with `ReviewTool:Languages` (see *Configuration*).
+- Unified or split diffs, expand to the full file, line wrapping,
   a dark theme by default (the theme button switches to light or to your OS setting), and keyboard
   shortcuts (press <kbd>?</kbd>).
 
@@ -221,6 +230,7 @@ Set these in `src/ReviewTool.Server/appsettings.json` or as environment variable
 | `ReviewTool:DataDirectory` | `~/.reviewtool` | Where reviews are stored (`--data-dir`) |
 | `ReviewTool:GitExecutable` | `git` | Path to git |
 | `ReviewTool:GitTimeoutSeconds` | `120` | Timeout per git command |
+| `ReviewTool:Languages` | `{}` | Extra file name/extension → highlighting language mappings, e.g. `{ ".tpl": "html", "Jenkinsfile.ci": "groovy" }` (VS Code language ids) |
 | `ReviewTool:AllowedHosts` | `[]` | Host names the API answers to besides localhost (`--allowed-host`). See *Security*. |
 | `ReviewTool:Credentials:Tokens` | `{}` | Tokens keyed by `github`, a host, or `github:host` |
 | `ReviewTool:Credentials:UseCliTools` / `UseGitCredentialHelper` | `true` | Whether to ask `gh` / git's credential helper for a token |

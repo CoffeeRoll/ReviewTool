@@ -1,37 +1,37 @@
 import { describe, expect, it } from 'vitest';
-import { highlightFile, highlightLine, splitHighlightedHtml } from './highlight';
+import { highlightFile, languageFor, setLanguageOverrides } from './highlight';
 
-describe('splitHighlightedHtml', () => {
-  it('closes and reopens spans that cross line breaks', () => {
-    const lines = splitHighlightedHtml('<span class="c">/* a\nb */</span> x\ny');
-    expect(lines).toEqual(['<span class="c">/* a</span>', '<span class="c">b */</span> x', 'y']);
+describe('languageFor', () => {
+  it('maps file names and extensions to languages', () => {
+    expect(languageFor('src/Program.cs')).toBe('cs');
+    expect(languageFor('Views/Home/Index.cshtml')).toBe('razor');
+    expect(languageFor('ReviewTool.Server.csproj')).toBe('xml');
+    expect(languageFor('native/thing.h')).toBe('cpp');
+    expect(languageFor('build/Dockerfile')).toBe('dockerfile');
+    expect(languageFor('LICENSE')).toBeNull();
   });
 
-  it('handles nested spans', () => {
-    const lines = splitHighlightedHtml('<span class="a"><span class="b">1\n2</span>3\n4</span>');
-    expect(lines).toEqual(['<span class="a"><span class="b">1</span></span>', '<span class="a"><span class="b">2</span>3</span>', '<span class="a">4</span>']);
+  it('honours configured overrides', () => {
+    setLanguageOverrides({ '.props': 'msbuild-ish', 'Directory.Packages.props': 'xml', tpl: 'html' });
+    expect(languageFor('a/Directory.Packages.props')).toBe('xml');
+    expect(languageFor('other.props')).toBe('msbuild-ish');
+    expect(languageFor('page.tpl')).toBe('html');
+    setLanguageOverrides({});
+    expect(languageFor('other.props')).toBe('xml');
   });
 });
 
 describe('highlightFile', () => {
-  const source = ['/*', ' * if this were code, "if" would be a keyword', ' */', 'if (x) { return; }', ''].join('\r\n');
-
-  it('keeps every line of a block comment coloured as a comment', () => {
-    const file = highlightFile(source, 'csharp')!;
-    expect(file.lines).toHaveLength(4);
-    expect(file.lines[1]).toBe(' * if this were code, "if" would be a keyword');
-    expect(file.html[1]).toContain('hljs-comment');
-    expect(file.html[1]).not.toContain('hljs-keyword');
-    expect(file.html[3]).toContain('hljs-keyword');
+  it('returns per-line HTML that lines up with the text, CRLF included', async () => {
+    const file = (await highlightFile('/*\r\n * if not code\r\n */\r\nif (x) { }\r\n', 'cs'))!;
+    expect(file.lines).toEqual(['/*', ' * if not code', ' */', 'if (x) { }']);
+    expect(file.html[1]).toContain('tk-comment');
+    expect(file.html[3]).toContain('tk-control');
   });
 
-  it('fixes what per-line highlighting gets wrong', () => {
-    // On its own the middle line looks like code.
-    expect(highlightLine(' * if this were code, "if" would be a keyword', 'csharp')).toContain('hljs-keyword');
-  });
-
-  it('gives up on unknown languages and huge files', () => {
-    expect(highlightFile('x', null)).toBeNull();
-    expect(highlightFile('x\n'.repeat(300_000), 'csharp')).toBeNull();
+  it('gives up on unknown languages and huge files', async () => {
+    expect(await highlightFile('x', null)).toBeNull();
+    expect(await highlightFile('x', 'no-such-language')).toBeNull();
+    expect(await highlightFile('x\n'.repeat(300_000), 'cs')).toBeNull();
   });
 });
