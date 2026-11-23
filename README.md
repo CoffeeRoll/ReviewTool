@@ -39,7 +39,8 @@ specific lines. Your progress is saved, so you can stop and pick the review up a
 - **Built for going commit by commit.**
   - **↻ Changes again later:** lines added in one commit that a later commit rewrites are marked
     *↻ n* (with n the later commit's number) and dimmed, so you don't pick apart code that gets
-    replaced anyway. This uses `git blame --reverse`.
+    replaced anyway. The marker sits in a gutter left of the line numbers, so it's always in the same
+    place; an orange stripe shows the rest of the affected block. This uses `git blame --reverse`.
     - **Click the marker to peek** without leaving your place. The *Commit n* tab shows the part of that
       commit that changes the line. The *Final version* tab shows what the code ends up as at the end
       of the review, or says it was removed.

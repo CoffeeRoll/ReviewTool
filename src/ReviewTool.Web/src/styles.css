@@ -1972,7 +1972,7 @@ textarea:focus {
 .line.peek-target .ln {
   box-shadow: inset 0 1px 0 var(--later), inset 0 -1px 0 var(--later);
 }
-.line.peek-target .ln:first-child {
+.line.peek-target > td:first-child {
   box-shadow: inset 3px 0 0 var(--later), inset 0 1px 0 var(--later), inset 0 -1px 0 var(--later);
 }
 .final-table .final-region .code,
@@ -2012,4 +2012,35 @@ textarea:focus {
 }
 .density-row .seg button {
   font-size: 12px;
+}
+
+/* "Changes again later" gutter (left of the line numbers) */
+.diff-table col.later-col {
+  width: 38px;
+}
+.later-cell {
+  padding: 0;
+  text-align: center;
+  background: var(--surface);
+  user-select: none;
+}
+.later-cell.has {
+  box-shadow: inset 3px 0 0 var(--later);
+  background: var(--later-bg);
+}
+.later-cell .later-chip {
+  display: inline-block;
+  margin-top: 1px;
+  padding: 0 4px;
+  min-width: 26px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--later);
+  font: 700 10.5px/calc(var(--code-line) - 4px) var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.later-cell .later-chip:hover {
+  border-color: var(--later);
 }

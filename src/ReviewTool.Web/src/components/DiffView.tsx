@@ -270,7 +270,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
   const peekRow = (line: DiffLine | null | undefined, key: string): ReactNode =>
     peek && line?.type === 'Add' && line.newLine === peek.line ? (
       <tr key={key} className="peek-row">
-        <td colSpan={split ? 4 : plain ? 2 : 3}>
+        <td colSpan={cols}>
           <LaterChangePeek change={peek.change} fromCommit={commitKey} path={path} line={peek.line} viewId={viewId} onClose={() => setPeek(null)} />
         </td>
       </tr>
@@ -291,24 +291,36 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
         </button>,
       );
     }
-    // One chip per run of consecutive lines rewritten by the same later commit.
-    const prevLater = line.newLine != null ? later.get(line.newLine - 1) : undefined;
-    const runContinues = !!prevLater && prevLater.commitSha === d.later?.commitSha && laterAdded.has(line.newLine! - 1);
-    if (d.later && !runContinues) {
-      const n = commitNumber.get(d.later.commitSha);
-      const subject = review.commits.find((c) => c.sha === d.later!.commitSha)?.subject ?? '';
-      out.push(
-        <button
-          key="l"
-          className={`chip later-chip ${peek?.line === line.newLine ? 'active' : ''}`}
-          onClick={(e) => onLaterClick(e, d.later!, line)}
-          title={`Changed again in commit ${n}: ${subject}\nClick to peek here · Ctrl+click to go to commit ${n}`}
-        >
-          ↻ {n}
-        </button>,
-      );
-    }
     return out.length ? out : null;
+  };
+
+  // ---- "Changes again later" gutter, left of the line numbers so it's always in the same place ----
+  // Shown in commits that have later commits (known up front, so the layout doesn't shift when data loads).
+  const activeCommits = review.commits.filter((c) => !c.outdated);
+  const showLaterGutter = !plain && isCommit && activeCommits.findIndex((c) => c.sha === commitKey) < activeCommits.length - 1;
+  const laterCell = (line: DiffLine | null | undefined, key?: string): ReactNode => {
+    if (!showLaterGutter) return null;
+    const lc = line?.type === 'Add' ? decorations.get(line)?.later : undefined;
+    if (!line || !lc) return <td key={key} className="later-cell" />;
+    // One button per run of consecutive lines rewritten by the same later commit; the rest get a stripe.
+    const prev = later.get(line.newLine! - 1);
+    const continues = !!prev && prev.commitSha === lc.commitSha && laterAdded.has(line.newLine! - 1);
+    const n = commitNumber.get(lc.commitSha);
+    const subject = review.commits.find((c) => c.sha === lc.commitSha)?.subject ?? '';
+    return (
+      <td key={key} className={`later-cell has ${continues ? 'run' : 'start'}`}>
+        {!continues && (
+          <button
+            className={`later-chip ${peek?.line === line.newLine ? 'active' : ''}`}
+            onClick={(e) => onLaterClick(e, lc, line)}
+            title={`Changed again in commit ${n}: ${subject}\nClick to peek here · Ctrl+click to go to commit ${n}`}
+            aria-label={`Changes again in commit ${n}`}
+          >
+            ↻{n}
+          </button>
+        )}
+      </td>
+    );
   };
 
   const lineClass = (line: DiffLine) => {
@@ -316,7 +328,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
     return `${d?.moved ? 'moved' : ''} ${d?.later && ui.showLater ? 'superseded' : ''}`;
   };
 
-  const cols = split ? 4 : plain ? 2 : 3;
+  const cols = (split ? 4 : plain ? 2 : 3) + (showLaterGutter ? 1 : 0);
   const rows: ReactNode[] = [];
   let rendered = 0;
   let remaining = 0;
@@ -389,6 +401,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
       const cls = `line ${line.type.toLowerCase()} ${inDraft(a) ? 'selected' : ''} ${lineClass(line)} ${isFocus(line) ? 'peek-target' : ''} ${flash === key ? 'flash' : ''}`;
       rows.push(
         <tr key={`${hi}-${li}`} className={cls} data-anchor={key}>
+          {laterCell(line)}
           {!plain && <td className="ln">{line.oldLine ?? ''}</td>}
           <td className="ln">{line.newLine ?? ''}</td>
           <CodeCell line={line} lang={lang} baseHtml={highlighted(line)} anchor={a} onAdd={onGutterClick} marker={!plain} ranges={decorations.get(line)?.ranges} badges={badges(line)} />
@@ -442,6 +455,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
           ) : (
             <td className="code empty" />
           )}
+          {laterCell(row.right)}
           <td className={`ln ${row.right ? (isContext ? '' : 'add') : 'empty'}`}>{row.right?.newLine ?? ''}</td>
           {row.right ? (
             <CodeCell
@@ -466,7 +480,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
         rows.push(
           <tr key={`${hi}-${ri}-n`} className="note-row">
             <td colSpan={2}>{leftThread}</td>
-            <td colSpan={2}>{rightThread}</td>
+            <td colSpan={showLaterGutter ? 3 : 2}>{rightThread}</td>
           </tr>,
         );
       }
@@ -486,11 +500,13 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
               <>
                 <col className="ln-col" />
                 <col />
+                {showLaterGutter && <col className="later-col" />}
                 <col className="ln-col" />
                 <col />
               </>
             ) : (
               <>
+                {showLaterGutter && <col className="later-col" />}
                 {!plain && <col className="ln-col" />}
                 <col className="ln-col" />
                 <col />
