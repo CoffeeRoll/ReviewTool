@@ -48,6 +48,38 @@ export function applyStoredTheme() {
   else document.documentElement.setAttribute('data-theme', t);
 }
 
+type Density = 'normal' | 'compact';
+const DENSITY_KEY = 'reviewtool.density';
+
+function readDensity(): Density {
+  try {
+    return localStorage.getItem(DENSITY_KEY) === 'compact' ? 'compact' : 'normal';
+  } catch {
+    return 'normal';
+  }
+}
+
+/** Applies the saved line spacing; a personal preference shared by all reviews, like the theme. */
+export function applyStoredDensity() {
+  if (readDensity() === 'compact') document.documentElement.setAttribute('data-density', 'compact');
+  else document.documentElement.removeAttribute('data-density');
+}
+
+function useDensity(): [Density, (d: Density) => void] {
+  const [density, setDensity] = useState<Density>(readDensity);
+  const set = (d: Density) => {
+    setDensity(d);
+    try {
+      localStorage.setItem(DENSITY_KEY, d);
+    } catch {
+      /* storage unavailable: still applies for this page */
+    }
+    if (d === 'compact') document.documentElement.setAttribute('data-density', 'compact');
+    else document.documentElement.removeAttribute('data-density');
+  };
+  return [density, set];
+}
+
 export function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>(readTheme);
   useEffect(() => {
@@ -84,6 +116,7 @@ export function ThemeToggle() {
 export function ViewMenu() {
   const { ui, setUi } = useSession();
   const [open, setOpen] = useState(false);
+  const [density, setDensity] = useDensity();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -116,6 +149,17 @@ export function ViewMenu() {
               ))}
             </select>
           </label>
+          <div className="menu-item density-row" title="Normal spacing is easier to read; compact fits more code on screen">
+            <span>Line spacing</span>
+            <div className="seg">
+              <button className={density === 'normal' ? 'on' : ''} onClick={() => setDensity('normal')}>
+                Normal
+              </button>
+              <button className={density === 'compact' ? 'on' : ''} onClick={() => setDensity('compact')}>
+                Compact
+              </button>
+            </div>
+          </div>
           {toggle('Hide whitespace changes', 'ignoreWhitespace', 'Ignore changes that only touch whitespace', 'i')}
           {toggle('Wrap long lines', 'wrap', 'Wrap instead of scrolling horizontally', 'w')}
           {toggle('Dim lines rewritten later', 'showLater', 'Fade added lines that a later commit changes again (they are always marked ↻)', 'd')}

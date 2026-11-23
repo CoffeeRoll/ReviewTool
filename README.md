@@ -63,6 +63,8 @@ specific lines. Your progress is saved, so you can stop and pick the review up a
     migration snapshots, and anything marked `linguist-generated` in `.gitattributes`.
   - The file list can show a **folder tree** or a flat list.
   - Very large diffs render in chunks so the page stays responsive.
+  - **Line spacing** (View menu): *Normal* for readability, or *Compact* to fit about a quarter more
+    code on screen. Remembered across reviews, like the theme.
 - **Post to GitHub.** Send the review (summary, verdict and notes) to the pull request. Notes become
   inline comments wherever their code is still in the final diff (see *Posting to GitHub*).
 - **Pull requests by number.** Enter a PR number and ReviewTool fetches its head
