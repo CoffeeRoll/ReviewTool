@@ -3,6 +3,7 @@ import { api } from './api';
 import {
   RANGE,
   SINCE,
+  type BlobContent,
   type ChangedFile,
   type DiffSide,
   type FileDiff,
@@ -85,6 +86,8 @@ interface SessionValue {
   getLaterChanges: (key: string, path: string) => Promise<LaterChange[]>;
   /** Open notes whose code a later commit changes. */
   followUps: NoteFollowUp[];
+  /** File contents at a commit (side "Old" = before the commit), cached for the session. */
+  getBlob: (key: string, path: string, side?: DiffSide) => Promise<BlobContent>;
 
   draft: NoteDraft | null;
   setDraft: (d: NoteDraft | null) => void;
@@ -133,6 +136,7 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
   const [followUps, setFollowUps] = useState<NoteFollowUp[]>([]);
   const pendingMoved = useRef(new Set<string>());
   const laterCache = useRef(new Map<string, Promise<LaterChange[]>>());
+  const blobCache = useRef(new Map<string, Promise<BlobContent>>());
   const pendingFiles = useRef(new Map<string, Promise<ChangedFile[]>>());
   const diffCache = useRef(new Map<string, Promise<FileDiff>>());
   const reviewId = review.id;
@@ -270,6 +274,21 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
       return p;
     },
     [reviewId, review.headSha],
+  );
+
+  const getBlob = useCallback(
+    (key: string, path: string, side: DiffSide = 'New') => {
+      const k = `${cacheKey(key)}|${side}|${path}`;
+      let p = blobCache.current.get(k);
+      if (!p) {
+        p = api.blob(reviewId, key, path, side);
+        p.catch(() => blobCache.current.delete(k));
+        if (blobCache.current.size > 200) blobCache.current.clear();
+        blobCache.current.set(k, p);
+      }
+      return p;
+    },
+    [reviewId, cacheKey],
   );
 
   // Follow-ups depend on notes and on the commit list; recompute when either changes.
@@ -419,6 +438,7 @@ export function SessionProvider({ initial, children }: { initial: Review; childr
     loadMoved,
     getLaterChanges,
     followUps,
+    getBlob,
     draft,
     setDraft,
     addNote,

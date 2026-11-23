@@ -1,6 +1,6 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { anchorFor, anchorKey, basename, hiddenLinesBefore, linesText, noteAnchorKey, toSplitRows, type LineAnchor } from '../lib/diff';
-import { highlightLine, languageFor } from '../lib/highlight';
+import { highlightFile, highlightLine, languageFor, type HighlightedFile } from '../lib/highlight';
 import { hunkRanges, isHunkReviewed, parseRanges } from '../lib/ranges';
 import { notesFor, useSession, type NoteDraft } from '../lib/session';
 import { isSpecialKey, type DiffHunk, type DiffLine, type FileDiff, type LaterChange, type MovedBlock, type NoteFollowUp, type ReviewNote } from '../lib/types';
@@ -57,6 +57,9 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
     review.commits.filter((c) => !c.outdated).forEach((c, i) => m.set(c.sha, i + 1));
     return m;
   }, [review.commits]);
+
+  // ---- Syntax highlighting of whole file versions, so multi-line comments/strings colour correctly ----
+  const highlighted = useWholeFileHighlighting(commitKey, path, diff, lang);
 
   // ---- Moved code (computed per commit across all files) ----
   const { loadMoved } = session;
@@ -355,7 +358,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
         <tr key={`${hi}-${li}`} className={cls} data-anchor={key}>
           {!plain && <td className="ln">{line.oldLine ?? ''}</td>}
           <td className="ln">{line.newLine ?? ''}</td>
-          <CodeCell line={line} lang={lang} anchor={a} onAdd={onGutterClick} marker={!plain} ranges={decorations.get(line)?.ranges} badges={badges(line)} />
+          <CodeCell line={line} lang={lang} baseHtml={highlighted(line)} anchor={a} onAdd={onGutterClick} marker={!plain} ranges={decorations.get(line)?.ranges} badges={badges(line)} />
         </tr>,
       );
       const thread = threadFor(key);
@@ -388,6 +391,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
             <CodeCell
               line={row.left}
               lang={lang}
+              baseHtml={highlighted(row.left)}
               anchor={la!}
               onAdd={onGutterClick}
               marker
@@ -403,6 +407,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
             <CodeCell
               line={row.right}
               lang={lang}
+              baseHtml={highlighted(row.right)}
               anchor={ra!}
               onAdd={onGutterClick}
               marker
@@ -483,6 +488,7 @@ export function DiffView({ viewId, commitKey, path, diff, isFull, onExpand, plai
 const CodeCell = memo(function CodeCell({
   line,
   lang,
+  baseHtml,
   anchor,
   onAdd,
   marker,
@@ -492,6 +498,8 @@ const CodeCell = memo(function CodeCell({
 }: {
   line: DiffLine;
   lang: string | null;
+  /** Line HTML from whole-file highlighting; falls back to highlighting the line on its own. */
+  baseHtml?: string;
   anchor: LineAnchor;
   onAdd: (a: LineAnchor, extend: boolean) => void;
   marker: boolean;
@@ -500,9 +508,9 @@ const CodeCell = memo(function CodeCell({
   extraClass?: string;
 }) {
   const html = useMemo(() => {
-    const base = highlightLine(line.text, lang);
+    const base = baseHtml ?? highlightLine(line.text, lang);
     return ranges && ranges.length ? markRanges(base, ranges, line.type === 'Delete' ? 'wd wd-del' : 'wd wd-add') : base;
-  }, [line.text, line.type, lang, ranges]);
+  }, [line.text, line.type, lang, ranges, baseHtml]);
   const sign = line.type === 'Add' ? '+' : line.type === 'Delete' ? '-' : ' ';
   return (
     <td className={`code ${extraClass}`}>
@@ -521,6 +529,47 @@ const CodeCell = memo(function CodeCell({
     </td>
   );
 });
+
+/**
+ * Highlights the old and new versions of the file as wholes (fetched once and cached), and returns a
+ * lookup from a diff line to its highlighted HTML. Lines are matched by number and verified by text;
+ * anything that doesn't match (or a file too large to highlight whole) uses per-line highlighting.
+ */
+function useWholeFileHighlighting(commitKey: string, path: string, diff: FileDiff, lang: string | null) {
+  const { getBlob } = useSession();
+  const [files, setFiles] = useState<{ key: string; old: HighlightedFile | null; new: HighlightedFile | null } | null>(null);
+  const oldPath = diff.oldPath ?? path;
+  const needOld = diff.status !== 'Added' && diff.hunks.some((h) => h.lines.some((l) => l.type === 'Delete'));
+  const needNew = diff.status !== 'Deleted' && diff.hunks.some((h) => h.lines.some((l) => l.type !== 'Delete'));
+  const key = `${commitKey}|${oldPath}|${path}|${needOld}|${needNew}`;
+
+  useEffect(() => {
+    if (!lang || diff.isBinary || (!needOld && !needNew)) return;
+    let cancelled = false;
+    const load = (p: string, side: 'Old' | 'New', needed: boolean) =>
+      needed
+        ? getBlob(commitKey, p, side).then(
+            (b) => (b.text != null ? highlightFile(b.text, lang, `${commitKey}|${side}|${p}|${b.sha}`) : null),
+            () => null,
+          )
+        : Promise.resolve(null);
+    Promise.all([load(oldPath, 'Old', needOld), load(path, 'New', needNew)]).then(([o, n]) => {
+      if (!cancelled) setFiles({ key, old: o, new: n });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [key, lang, diff.isBinary, getBlob, commitKey, oldPath, path, needOld, needNew]);
+
+  const current = files?.key === key ? files : null;
+  return (line: DiffLine): string | undefined => {
+    if (!current) return undefined;
+    const file = line.type === 'Delete' ? current.old : current.new;
+    const n = line.type === 'Delete' ? line.oldLine : line.newLine;
+    if (!file || n == null || file.lines[n - 1] !== line.text) return undefined;
+    return file.html[n - 1];
+  };
+}
 
 /** A note from an earlier commit, shown where a later commit changes the code it was about. */
 function CarriedNote({ note, followUp }: { note: ReviewNote; followUp: NoteFollowUp }) {

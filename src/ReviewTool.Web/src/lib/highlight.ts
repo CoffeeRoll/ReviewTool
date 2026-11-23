@@ -69,3 +69,74 @@ export function highlightLine(text: string, lang: string | null): string {
   cache.set(key, html);
   return html;
 }
+
+/** Above this size a file is highlighted line by line instead (fast, but loses multi-line context). */
+export const MAX_FILE_HIGHLIGHT_CHARS = 400_000;
+
+export interface HighlightedFile {
+  /** The file's lines as plain text (no line endings), for checking a diff line matches. */
+  lines: string[];
+  /** The same lines as highlighted HTML, each self-contained (open spans closed and reopened). */
+  html: string[];
+}
+
+const fileCache = new Map<string, HighlightedFile>();
+
+/**
+ * Highlights a whole file at once, so constructs spanning lines (block comments, multi-line strings,
+ * doc comments) are coloured correctly, then splits the result into lines. Returns null for unknown
+ * languages and very large files.
+ */
+export function highlightFile(text: string, lang: string | null, cacheKey?: string): HighlightedFile | null {
+  if (!lang || text.length > MAX_FILE_HIGHLIGHT_CHARS) return null;
+  const key = cacheKey ? `${lang}\u0000${cacheKey}` : null;
+  const hit = key ? fileCache.get(key) : undefined;
+  if (hit) return hit;
+
+  // Only CRLF is a line break to git; a lone CR stays part of its line.
+  const normalized = text.replace(/\r\n/g, '\n');
+  const body = normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized;
+  let highlighted: string;
+  try {
+    highlighted = hljs.highlight(body, { language: lang, ignoreIllegals: true }).value;
+  } catch {
+    return null;
+  }
+  const result = { lines: body.split('\n'), html: splitHighlightedHtml(highlighted) };
+  if (result.html.length !== result.lines.length) return null; // shouldn't happen; fall back to per-line
+
+  if (key) {
+    if (fileCache.size > 60) fileCache.delete(fileCache.keys().next().value!);
+    fileCache.set(key, result);
+  }
+  return result;
+}
+
+const TOKEN = /(<span[^>]*>)|(<\/span>)|(\n)|([^<\n]+)/g;
+
+/**
+ * Splits highlight.js output into one HTML string per line. A span that is open at a line break (e.g. a
+ * block comment) is closed at the end of that line and reopened at the start of the next, so each line
+ * renders on its own with the right colours.
+ */
+export function splitHighlightedHtml(html: string): string[] {
+  const lines: string[] = [];
+  const open: string[] = [];
+  let current = '';
+  for (const m of html.matchAll(TOKEN)) {
+    if (m[1]) {
+      open.push(m[1]);
+      current += m[1];
+    } else if (m[2]) {
+      open.pop();
+      current += m[2];
+    } else if (m[3]) {
+      lines.push(current + '</span>'.repeat(open.length));
+      current = open.join('');
+    } else {
+      current += m[4];
+    }
+  }
+  lines.push(current + '</span>'.repeat(open.length));
+  return lines;
+}

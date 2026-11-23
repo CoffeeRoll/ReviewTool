@@ -46,20 +46,20 @@ function useFileDiff(commitKey: string, path: string, oldPath: string | null | u
 }
 
 function useBlob(commitKey: string, path: string, enabled = true) {
-  const { review } = useSession();
+  const { getBlob } = useSession();
   const [state, setState] = useState<{ blob?: BlobContent; error?: string; key?: string }>({});
   const key = `${commitKey}|${path}`;
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    api.blob(review.id, commitKey, path).then(
+    getBlob(commitKey, path).then(
       (blob) => !cancelled && setState({ blob, key }),
       (e: Error) => !cancelled && setState({ error: e.message, key }),
     );
     return () => {
       cancelled = true;
     };
-  }, [key, enabled, review.id, commitKey, path]);
+  }, [key, enabled, getBlob, commitKey, path]);
   return { ...state, loading: state.key !== key };
 }
 
