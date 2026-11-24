@@ -7,7 +7,7 @@ import { Sidebar } from '../components/Sidebar';
 import { api } from '../lib/api';
 import { overallProgress, shortSha } from '../lib/diff';
 import { SessionProvider, useSession } from '../lib/session';
-import { RANGE, REVIEW_STATUSES, SINCE, type Review } from '../lib/types';
+import { RANGE, REVIEW_STATUSES, SINCE, type Review, type ReviewPullRequestLink } from '../lib/types';
 
 export function ReviewPage({ id }: { id: string }) {
   const [review, setReview] = useState<Review | null>(null);
@@ -42,6 +42,7 @@ function ReviewWorkspace() {
   const session = useSession();
   const { review, ui, setUi, files, commitKeys, selectCommit, setReviewed, isReviewed, openPane, setDraft, error, setError } = session;
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [finishClosed, setFinishClosed] = useState(0);
   const mainRef = useRef<HTMLDivElement>(null);
   const fileList = files(ui.commitKey);
 
@@ -176,7 +177,7 @@ function ReviewWorkspace() {
 
   return (
     <div className="workspace">
-      <TopBar onFinish={() => setDialog('finish')} onHelp={() => setDialog('help')} onToggleLayout={toggleLayout} />
+      <TopBar onFinish={() => setDialog('finish')} onHelp={() => setDialog('help')} onToggleLayout={toggleLayout} linkKey={finishClosed} />
       {error && (
         <div className="banner error">
           {error}
@@ -209,13 +210,30 @@ function ReviewWorkspace() {
         {ui.notesOpen && <NotesPanel onClose={() => setUi({ notesOpen: false })} onExport={() => setDialog('finish')} />}
       </div>
       {dialog === 'browse' && <FileBrowser onClose={() => setDialog(null)} />}
-      {dialog === 'finish' && <FinishDialog onClose={() => setDialog(null)} />}
+      {dialog === 'finish' && (
+        <FinishDialog
+          onClose={() => {
+            setDialog(null);
+            setFinishClosed((n) => n + 1); // posting may have linked the review to a PR
+          }}
+        />
+      )}
       {dialog === 'help' && <ShortcutsDialog onClose={() => setDialog(null)} />}
     </div>
   );
 }
 
-function TopBar({ onFinish, onHelp, onToggleLayout }: { onFinish: () => void; onHelp: () => void; onToggleLayout: () => void }) {
+function TopBar({
+  onFinish,
+  onHelp,
+  onToggleLayout,
+  linkKey,
+}: {
+  onFinish: () => void;
+  onHelp: () => void;
+  onToggleLayout: () => void;
+  linkKey: number;
+}) {
   const { review, ui, setUi, saveState, refresh, patchReview } = useSession();
   const [editingName, setEditingName] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -281,6 +299,7 @@ function TopBar({ onFinish, onHelp, onToggleLayout }: { onFinish: () => void; on
       <button className={`btn small ${ui.notesOpen ? 'active' : ''}`} onClick={() => setUi({ notesOpen: !ui.notesOpen })} title="Notes panel (Shift+N)">
         💬 Notes{openNotes > 0 ? ` (${openNotes})` : ''}
       </button>
+      <PullRequestLinkButton linkKey={linkKey} />
       <button className="btn small primary" onClick={onFinish} title="Summary, status and Markdown export">
         {status && review.status !== 'InProgress' ? status.label : 'Finish'}
       </button>
@@ -289,5 +308,33 @@ function TopBar({ onFinish, onHelp, onToggleLayout }: { onFinish: () => void; on
         ?
       </button>
     </header>
+  );
+}
+
+/** "Open on GitHub" — the review's pull request, or a search for PRs from its branch when the number isn't known. */
+function PullRequestLinkButton({ linkKey }: { linkKey: number }) {
+  const { review } = useSession();
+  const [link, setLink] = useState<ReviewPullRequestLink | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.pullRequestLink(review.id).then(
+      (l) => !cancelled && setLink(l ?? null),
+      () => !cancelled && setLink(null),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [review.id, review.headSha, linkKey]);
+  if (!link) return null;
+  return (
+    <a
+      className="btn small pr-link-btn"
+      href={link.url}
+      target="_blank"
+      rel="noreferrer"
+      title={link.number ? `Open pull request #${link.number} on ${link.providerName} to see your review and merge` : `Find the pull request for this branch on ${link.providerName}`}
+    >
+      {link.number ? `${link.providerName} #${link.number} ↗` : `Find PR on ${link.providerName} ↗`}
+    </a>
   );
 }

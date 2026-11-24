@@ -134,8 +134,53 @@ public class PullRequestListTests : IDisposable
         var plain = await _reviews.CreateAsync(new CreateReviewRequest(_repo.Path, "main", "feature"));
 
         var states = await Service().GetReviewPullRequestStatesAsync();
-        Assert.Equal("open", states[open]);
-        Assert.Equal("merged", states[merged]);
+        Assert.Equal(new ReviewPullRequestStatus("open", "https://github.com/acme/demo/pull/7"), states[open]);
+        Assert.Equal("merged", states[merged].State);
         Assert.False(states.ContainsKey(plain.Id)); // not started from a PR
+
+        // Without sign-in the state is unknown, but the link still works.
+        var anonymous = new PullRequestService(_reviews, [new GitHubPublisher(new HttpClient(new FakeGitHub()), new GitHubOptions())], new FixedCredentials(null));
+        Assert.Equal(new ReviewPullRequestStatus(null, "https://github.com/acme/demo/pull/5"), (await anonymous.GetReviewPullRequestStatesAsync())[merged]);
+    }
+
+    [Fact]
+    public async Task LinksEachReviewToItsPullRequestOnTheHostingSite()
+    {
+        _repo.Git("remote", "add", "origin", "git@github.com:acme/demo.git");
+        _repo.Git("branch", "feat", "feature");
+
+        // Branch review, signed in: GitHub says PR #7 comes from "feat".
+        var branchReview = await _reviews.CreateAsync(new CreateReviewRequest(_repo.Path, "main", "feat"));
+        Assert.Equal(new ReviewPullRequestLink("github", "GitHub", "https://github.com/acme/demo/pull/7", 7), await Service().GetReviewLinkAsync(branchReview.Id));
+
+        // Not signed in: a search for PRs from that branch instead.
+        var search = await Service(token: null).GetReviewLinkAsync(branchReview.Id);
+        Assert.Null(search!.Number);
+        Assert.Equal("https://github.com/acme/demo/pulls?q=is%3Apr%20head%3Afeat", search.Url);
+
+        // A review that was posted somewhere links there, even without sign-in.
+        await _reviews.Store.UpdateAsync(branchReview.Id, r =>
+        {
+            r.Publications.Add(new PublicationRecord { Provider = "github", Repository = "acme/demo", PullRequestNumber = 42 });
+            return Task.CompletedTask;
+        });
+        Assert.Equal(42, (await Service(token: null).GetReviewLinkAsync(branchReview.Id))!.Number);
+
+        // A review started from a PR number links to it directly.
+        var prReview = await _reviews.CreateAsync(new CreateReviewRequest(_repo.Path, "main", "feature"));
+        await _reviews.Store.UpdateAsync(prReview.Id, r =>
+        {
+            r.PullRequest = new PullRequestRef { Number = 9, Remote = "origin" };
+            return Task.CompletedTask;
+        });
+        Assert.Equal("https://github.com/acme/demo/pull/9", (await Service(token: null).GetReviewLinkAsync(prReview.Id))!.Url);
+    }
+
+    [Fact]
+    public async Task HasNoLinkForRepositoriesOffSupportedPlatforms()
+    {
+        UseLocalRemoteLikeGitHub(); // a plain git remote
+        var review = await _reviews.CreateAsync(new CreateReviewRequest(_repo.Path, "main", "feature"));
+        Assert.Null(await Service().GetReviewLinkAsync(review.Id));
     }
 }

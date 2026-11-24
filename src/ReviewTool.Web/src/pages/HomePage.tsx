@@ -4,7 +4,7 @@ import { OpenPullRequests } from '../components/OpenPullRequests';
 import { ProgressRing } from '../components/Sidebar';
 import { api } from '../lib/api';
 import { relativeTime, shortSha } from '../lib/diff';
-import { REVIEW_STATUSES, type CommitInfo, type RepoInfo, type RepoRefs, type ReviewSummary } from '../lib/types';
+import { REVIEW_STATUSES, type CommitInfo, type RepoInfo, type RepoRefs, type ReviewPullRequestStatus, type ReviewSummary } from '../lib/types';
 
 const RECENT_KEY = 'reviewtool.recentRepos';
 
@@ -28,7 +28,7 @@ export function HomePage({ initialRepo }: { initialRepo?: string }) {
   const [reviews, setReviews] = useState<ReviewSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [repo, setRepo] = useState<RepoInfo | null>(null);
-  const [prStates, setPrStates] = useState<Record<string, string>>({});
+  const [prStates, setPrStates] = useState<Record<string, ReviewPullRequestStatus>>({});
   const [showFinished, setShowFinished] = useState(false);
 
   const load = () => api.listReviews().then(setReviews, (e: Error) => setError(e.message));
@@ -39,7 +39,7 @@ export function HomePage({ initialRepo }: { initialRepo?: string }) {
   }, []);
 
   // Reviews of PRs that are merged or closed move to their own (collapsed) section.
-  const finished = (r: ReviewSummary) => prStates[r.id] === 'merged' || prStates[r.id] === 'closed';
+  const finished = (r: ReviewSummary) => prStates[r.id]?.state === 'merged' || prStates[r.id]?.state === 'closed';
   const active = reviews?.filter((r) => !finished(r)) ?? [];
   const done = reviews?.filter(finished) ?? [];
   const row = (r: ReviewSummary) => (
@@ -86,7 +86,7 @@ export function HomePage({ initialRepo }: { initialRepo?: string }) {
   );
 }
 
-function ReviewRow({ review: r, prState, onDelete }: { review: ReviewSummary; prState?: string; onDelete: () => void }) {
+function ReviewRow({ review: r, prState, onDelete }: { review: ReviewSummary; prState?: ReviewPullRequestStatus; onDelete: () => void }) {
   const status = REVIEW_STATUSES.find((s) => s.value === r.status)?.label ?? r.status;
   const pct = r.fileCount === 0 ? 100 : Math.round((r.reviewedFileCount / r.fileCount) * 100);
   return (
@@ -97,9 +97,9 @@ function ReviewRow({ review: r, prState, onDelete }: { review: ReviewSummary; pr
           <div className="review-row-title">
             <strong>{r.name}</strong>
             <span className={`badge status-${r.status.toLowerCase()}`}>{status}</span>
-            {r.pullRequest && prState && (
-              <span className={`badge pr-state pr-${prState}`} title={`Pull request #${r.pullRequest.number} is ${prState}`}>
-                PR {prState}
+            {r.pullRequest && prState?.state && (
+              <span className={`badge pr-state pr-${prState.state}`} title={`Pull request #${r.pullRequest.number} is ${prState.state}`}>
+                PR {prState.state}
               </span>
             )}
           </div>
@@ -116,6 +116,11 @@ function ReviewRow({ review: r, prState, onDelete }: { review: ReviewSummary; pr
         <a className="btn primary" href={`#/review/${r.id}`}>
           {r.reviewedFileCount > 0 ? 'Resume' : 'Start'}
         </a>
+        {prState?.url && (
+          <a className="btn" href={prState.url} target="_blank" rel="noreferrer" title={`Open pull request #${r.pullRequest?.number} in the browser`}>
+            PR #{r.pullRequest?.number} ↗
+          </a>
+        )}
         <a className="btn" href={api.exportUrl(r.id)} target="_blank" rel="noreferrer" title="Notes as Markdown">
           Export
         </a>

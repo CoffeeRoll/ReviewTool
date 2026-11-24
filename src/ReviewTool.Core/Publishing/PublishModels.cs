@@ -51,6 +51,13 @@ public sealed record OpenPullRequestEntry(
 /// <param name="Note">Why the list is limited (not signed in, couldn't reach the remote, ...), if it is.</param>
 public sealed record OpenPullRequestList(string Source, string SourceName, string? Remote, string? Repository, string? WebUrl, string? Note, List<OpenPullRequestEntry> PullRequests);
 
+/// <summary>State and browser link of the pull request behind a review. State is null when unknown (not signed in, offline).</summary>
+public sealed record ReviewPullRequestStatus(string? State, string Url);
+
+/// <summary>Where to see a review's pull request on the hosting site.</summary>
+/// <param name="Url">The pull request itself, or a search for PRs from the review's branch when <paramref name="Number"/> is null.</param>
+public sealed record ReviewPullRequestLink(string Provider, string ProviderName, string Url, int? Number);
+
 /// <summary>Where a note can be attached in the pull request's diff (head version for New, base for Old).</summary>
 public sealed record InlinePosition(string Path, DiffSide Side, int StartLine, int EndLine);
 

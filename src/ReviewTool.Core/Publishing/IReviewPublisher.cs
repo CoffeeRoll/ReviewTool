@@ -18,6 +18,12 @@ public interface IReviewPublisher
     /// <summary>Browser URL of the repository.</summary>
     string WebUrl(RemoteRepository remote);
 
+    /// <summary>Browser URL of a pull request.</summary>
+    string PullRequestUrl(RemoteRepository remote, int number);
+
+    /// <summary>Browser URL listing the pull requests whose source branch is <paramref name="branch"/> (when the number isn't known).</summary>
+    string PullRequestSearchUrl(RemoteRepository remote, string branch);
+
     CredentialHints GetCredentialHints(string host);
 
     Task<PullRequestInfo> GetPullRequestAsync(RemoteRepository remote, int number, string token, CancellationToken ct);

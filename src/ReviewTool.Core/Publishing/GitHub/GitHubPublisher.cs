@@ -29,6 +29,11 @@ public sealed class GitHubPublisher(HttpClient http, GitHubOptions options) : IR
 
     public string WebUrl(RemoteRepository remote) => $"https://{remote.Host}/{remote.FullName}";
 
+    public string PullRequestUrl(RemoteRepository remote, int number) => $"{WebUrl(remote)}/pull/{number}";
+
+    public string PullRequestSearchUrl(RemoteRepository remote, string branch)
+        => $"{WebUrl(remote)}/pulls?q={Uri.EscapeDataString($"is:pr head:{branch}")}";
+
     public CredentialHints GetCredentialHints(string host) => new(
         host == "github.com" ? ["GITHUB_TOKEN", "GH_TOKEN"] : ["GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"],
         "gh",

@@ -81,6 +81,10 @@ specific lines. Your progress is saved, so you can stop and pick the review up a
     On GitHub only open PRs have a "merge" ref, so merged ones are still left out.
   - **Your reviews** puts reviews of PRs that have since been merged or closed in their own collapsed
     section, so the ones still open come first.
+- **Open on GitHub.** A button in the review's top bar (and on PR reviews on the home page) opens the
+  pull request, so you can see your posted review and merge.
+  - Branch reviews link to the PR you posted to, or to the open PR for the branch (when signed in).
+    Otherwise the button searches for PRs from that branch.
 - **Pull requests by number.** Enter a PR number and ReviewTool fetches its head
   (`pull/N/head` for GitHub/Gitea, `merge-requests/N/head` for GitLab) with your normal git
   credentials.
@@ -317,7 +321,8 @@ implementation (e.g. a database) in place of the JSON file store.
 | --- | --- |
 | `GET /api/repo?path=` · `GET /api/repo/refs?path=` · `GET /api/repo/commits?path=&base=&head=` | Inspect a repository |
 | `GET /api/repo/pulls?path=&remote=` | Open pull requests (GitHub, or the remote's git refs), with any review already started |
-| `GET /api/reviews/pr-states` | Whether the PR behind each review is open, merged or closed |
+| `GET /api/reviews/pr-states` | State (open/merged/closed) and link of the PR behind each review |
+| `GET /api/reviews/{id}/pull-request-link` | Where to see the review's PR on the hosting site |
 | `GET/POST /api/reviews` | List / create reviews (`{ repoPath, baseRef, headRef, name?, pullRequest? }`) |
 | `GET/PATCH/DELETE /api/reviews/{id}` | Read / update (name, summary, status, uiState) / delete |
 | `POST /api/reviews/{id}/refresh` | Re-read branches (re-fetches the PR) |

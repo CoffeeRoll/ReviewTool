@@ -89,55 +89,91 @@ public sealed class PullRequestService(ReviewService reviews, IEnumerable<IRevie
     }
 
     /// <summary>
-    /// State ("open", "closed", "merged") of the pull request behind each review that was started from a
-    /// PR number, where the platform can tell us. Reviews whose state is unknown are left out.
+    /// State ("open", "closed", "merged") and link of the pull request behind each review that was started
+    /// from a PR number. The state needs the platform (signed in); the link only needs a supported remote.
     /// </summary>
-    public async Task<Dictionary<string, string>> GetReviewPullRequestStatesAsync(CancellationToken ct = default)
+    public async Task<Dictionary<string, ReviewPullRequestStatus>> GetReviewPullRequestStatesAsync(CancellationToken ct = default)
     {
         var withPr = (await reviews.Store.ListAsync(ct)).Where(r => r.PullRequest != null).ToList();
-        var result = new ConcurrentDictionary<string, string>();
-        var repos = new ConcurrentDictionary<string, Task<(GitRepository Repo, List<(RemoteRepository Remote, IReviewPublisher Publisher)> Hosted)?>>();
+        var result = new ConcurrentDictionary<string, ReviewPullRequestStatus>();
+        var repos = new ConcurrentDictionary<string, Task<List<(RemoteRepository Remote, IReviewPublisher Publisher)>?>>();
         var tokens = new ConcurrentDictionary<string, Task<ResolvedCredential?>>();
 
         await Parallel.ForEachAsync(withPr, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, async (review, token) =>
         {
             var pr = review.PullRequest!;
+            var hostedRemotes = await repos.GetOrAdd(review.RepoPath, async path =>
+            {
+                try
+                {
+                    var repo = await reviews.OpenRepoAsync(path, token);
+                    return await PublishingService.FindRemotesAsync(repo, _publishers, null, token);
+                }
+                catch (GitException)
+                {
+                    return null;
+                }
+            });
+            var hosted = hostedRemotes?.FirstOrDefault(h => h.Remote.RemoteName == pr.Remote);
+            if (hosted is not { Remote: not null } h) return; // not on a supported platform: no link, no state
+            var url = h.Publisher.PullRequestUrl(h.Remote, pr.Number);
+
             var cacheKey = $"{review.RepoPath}|{pr.Remote}|{pr.Number}";
             if (_stateCache.TryGetValue(cacheKey, out var cached) && DateTimeOffset.UtcNow - cached.At < StateCacheTime)
             {
-                if (cached.State != null) result[review.Id] = cached.State;
+                result[review.Id] = new ReviewPullRequestStatus(cached.State, url);
                 return;
             }
             string? state = null;
             try
             {
-                var found = await repos.GetOrAdd(review.RepoPath, async path =>
-                {
-                    try
-                    {
-                        var repo = await reviews.OpenRepoAsync(path, token);
-                        return (repo, await PublishingService.FindRemotesAsync(repo, _publishers, null, token));
-                    }
-                    catch (GitException)
-                    {
-                        return null;
-                    }
-                });
-                var hosted = found?.Hosted.FirstOrDefault(h => h.Remote.RemoteName == pr.Remote);
-                if (hosted is { Remote: not null } h)
-                {
-                    var credential = await tokens.GetOrAdd($"{h.Publisher.Id}|{h.Remote.Host}", _ => credentials.ResolveAsync(h.Publisher, h.Remote, token));
-                    if (credential != null) state = (await h.Publisher.GetPullRequestAsync(h.Remote, pr.Number, credential.Token, token)).State;
-                }
+                var credential = await tokens.GetOrAdd($"{h.Publisher.Id}|{h.Remote.Host}", _ => credentials.ResolveAsync(h.Publisher, h.Remote, token));
+                if (credential != null) state = (await h.Publisher.GetPullRequestAsync(h.Remote, pr.Number, credential.Token, token)).State;
             }
             catch (PublishException)
             {
-                // Unknown (offline, no access): leave it out.
+                // Unknown (offline, no access).
             }
             _stateCache[cacheKey] = (state, DateTimeOffset.UtcNow);
-            if (state != null) result[review.Id] = state;
+            result[review.Id] = new ReviewPullRequestStatus(state, url);
         });
-        return new Dictionary<string, string>(result);
+        return new Dictionary<string, ReviewPullRequestStatus>(result);
+    }
+
+    /// <summary>
+    /// Where to see a review's pull request in the browser: the PR it was started from, the PR it was last
+    /// posted to, the open PR for its branch (when signed in), or else a search for PRs from its branch.
+    /// Null when the repository isn't on a supported platform.
+    /// </summary>
+    public async Task<ReviewPullRequestLink?> GetReviewLinkAsync(string reviewId, CancellationToken ct = default)
+    {
+        var review = await reviews.GetAsync(reviewId, ct);
+        var repo = await reviews.OpenRepoAsync(review.RepoPath, ct);
+        var hosted = await PublishingService.FindRemotesAsync(repo, _publishers, review.PullRequest?.Remote, ct);
+        if (hosted.Count == 0) return null;
+        var (remote, publisher) = review.PullRequest is { } pr ? hosted.FirstOrDefault(h => h.Remote.RemoteName == pr.Remote) : hosted[0];
+        if (remote == null) return null;
+        ReviewPullRequestLink Link(int number) => new(publisher.Id, publisher.DisplayName, publisher.PullRequestUrl(remote, number), number);
+
+        if (review.PullRequest != null) return Link(review.PullRequest.Number);
+        var posted = review.Publications.LastOrDefault(p => p.Provider == publisher.Id && p.Repository == remote.FullName);
+        if (posted != null) return Link(posted.PullRequestNumber);
+
+        var branch = PublishingService.BranchName(review.HeadRef, remote.RemoteName);
+        if (branch == null) return new ReviewPullRequestLink(publisher.Id, publisher.DisplayName, publisher.WebUrl(remote) + "/pulls", null);
+        var credential = await credentials.ResolveAsync(publisher, remote, ct);
+        if (credential != null)
+        {
+            try
+            {
+                if (await publisher.FindPullRequestAsync(remote, branch, credential.Token, ct) is { } found) return Link(found.Number);
+            }
+            catch (PublishException)
+            {
+                // Fall back to the search link.
+            }
+        }
+        return new ReviewPullRequestLink(publisher.Id, publisher.DisplayName, publisher.PullRequestSearchUrl(remote, branch), null);
     }
 
     private static string Join(string? a, string b) => string.IsNullOrEmpty(a) ? b : $"{a} {b}";

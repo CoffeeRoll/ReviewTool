@@ -11,6 +11,8 @@ import type {
   MovedBlock,
   NoteFollowUp,
   OpenPullRequestList,
+  ReviewPullRequestLink,
+  ReviewPullRequestStatus,
   PublishPreview,
   PublishRequestBody,
   PublishResult,
@@ -70,7 +72,9 @@ export const api = {
   repoRefs: (path: string) => request<RepoRefs>('GET', `/repo/refs${q({ path })}`),
   openPullRequests: (path: string, remote?: string | null) => request<OpenPullRequestList>('GET', `/repo/pulls${q({ path, remote })}`),
   /** State ("open" | "merged" | "closed") of the PR behind each review started from a PR, keyed by review id. */
-  reviewPullRequestStates: () => request<Record<string, string>>('GET', '/reviews/pr-states'),
+  reviewPullRequestStates: () => request<Record<string, ReviewPullRequestStatus>>('GET', '/reviews/pr-states'),
+  /** The review's pull request on the hosting site (undefined when the repo isn't on a supported platform). */
+  pullRequestLink: (id: string) => request<ReviewPullRequestLink | undefined>('GET', `/reviews/${enc(id)}/pull-request-link`),
   /** Resumes the matching review or starts a new one. */
   openReview: (req: CreateReviewRequest) => request<{ review: Review; created: boolean }>('POST', '/reviews/open', req),
   repoCommits: (path: string, base: string, head: string, signal?: AbortSignal) =>

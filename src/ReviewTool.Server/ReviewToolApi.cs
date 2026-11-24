@@ -156,6 +156,8 @@ public static class ReviewToolApi
             svc.SetLinesReviewedAsync(id, commit, req.Path, req.Ranges ?? [], req.Reviewed, ct));
         reviews.MapGet("/{id}/file-history", (string id, string path, ReviewService svc, CancellationToken ct) =>
             svc.GetFileHistoryAsync(id, path, ct));
+        reviews.MapGet("/{id}/pull-request-link", async (string id, PullRequestService svc, CancellationToken ct) =>
+            await svc.GetReviewLinkAsync(id, ct) is { } link ? Results.Ok(link) : Results.NoContent());
         reviews.MapGet("/{id}/followups", (string id, ReviewService svc, CancellationToken ct) => svc.GetNoteFollowUpsAsync(id, ct));
 
         // ---- Posting to GitHub (and other platforms) ----

@@ -394,3 +394,17 @@ export interface OpenPullRequestList {
   note: string | null;
   pullRequests: OpenPullRequestEntry[];
 }
+
+/** State (null when unknown) and browser link of the pull request behind a review. */
+export interface ReviewPullRequestStatus {
+  state: string | null;
+  url: string;
+}
+
+/** Where to see a review's pull request; number is null when it's a search for the branch's PRs. */
+export interface ReviewPullRequestLink {
+  provider: string;
+  providerName: string;
+  url: string;
+  number: number | null;
+}
