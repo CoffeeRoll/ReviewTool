@@ -18,7 +18,7 @@ public sealed class PublishingService(ReviewService reviews, IEnumerable<IReview
         var review = await reviews.GetAsync(reviewId, ct);
         var repo = await reviews.OpenRepoAsync(review.RepoPath, ct);
         var targets = new List<PublishTargetInfo>();
-        foreach (var (remote, publisher) in await FindRemotesAsync(review, repo, ct))
+        foreach (var (remote, publisher) in await FindRemotesAsync(repo, _publishers, review.PullRequest?.Remote, ct))
         {
             var credential = await credentials.ResolveAsync(publisher, remote, ct);
             targets.Add(Describe(remote, publisher, credential));
@@ -82,7 +82,7 @@ public sealed class PublishingService(ReviewService reviews, IEnumerable<IReview
     {
         var review = await reviews.GetAsync(reviewId, ct);
         var repo = await reviews.OpenRepoAsync(review.RepoPath, ct);
-        var candidates = await FindRemotesAsync(review, repo, ct);
+        var candidates = await FindRemotesAsync(repo, _publishers, review.PullRequest?.Remote, ct);
         if (candidates.Count == 0)
             throw new PublishException($"None of this repository's remotes is on a supported platform ({string.Join(", ", _publishers.Select(p => p.DisplayName))}).");
         var (remote, publisher) = candidates.FirstOrDefault(c =>
@@ -154,19 +154,20 @@ public sealed class PublishingService(ReviewService reviews, IEnumerable<IReview
         return new Prepared(review, remote, publisher, credential, pr, plan, preview);
     }
 
-    private async Task<List<(RemoteRepository Remote, IReviewPublisher Publisher)>> FindRemotesAsync(Review review, GitRepository repo, CancellationToken ct)
+    /// <summary>The repository's remotes that a publisher supports, preferred remote first, then origin/upstream.</summary>
+    internal static async Task<List<(RemoteRepository Remote, IReviewPublisher Publisher)>> FindRemotesAsync(
+        GitRepository repo, IReadOnlyList<IReviewPublisher> publishers, string? preferredRemote, CancellationToken ct)
     {
         var info = await repo.GetInfoAsync(ct);
-        // Prefer the remote the PR came from, then origin/upstream, then the rest.
         var ordered = info.Remotes
-            .OrderBy(r => r == review.PullRequest?.Remote ? 0 : r == "origin" ? 1 : r == "upstream" ? 2 : 3)
+            .OrderBy(r => r == preferredRemote ? 0 : r == "origin" ? 1 : r == "upstream" ? 2 : 3)
             .ThenBy(r => r, StringComparer.Ordinal);
         var result = new List<(RemoteRepository, IReviewPublisher)>();
         foreach (var name in ordered)
         {
             var url = await repo.GetRemoteUrlAsync(name, ct);
             if (url == null || RemoteRepository.TryParse(name, url) is not { } remote) continue;
-            if (_publishers.FirstOrDefault(p => p.CanHandle(remote)) is not { } publisher) continue;
+            if (publishers.FirstOrDefault(p => p.CanHandle(remote)) is not { } publisher) continue;
             if (result.Any(x => x.Item1.Host == remote.Host && x.Item1.FullName == remote.FullName)) continue;
             result.Add((remote, publisher));
         }

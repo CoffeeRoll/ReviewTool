@@ -26,4 +26,7 @@ public interface IReviewPublisher
     Task<PullRequestInfo?> FindPullRequestAsync(RemoteRepository remote, string branch, string token, CancellationToken ct);
 
     Task<PublishOutcome> PublishAsync(PublishContext context, CancellationToken ct);
+
+    /// <summary>Open pull requests in the repository, newest first.</summary>
+    Task<List<PullRequestSummary>> ListOpenPullRequestsAsync(RemoteRepository remote, string token, CancellationToken ct);
 }

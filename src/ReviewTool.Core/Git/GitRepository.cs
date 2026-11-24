@@ -402,6 +402,42 @@ public sealed class GitRepository
         return new BlobContent(path, rev, false, false, size, text);
     }
 
+    /// <summary>Updates <c>{remote}/{branch}</c> from the remote (what a plain <c>git fetch</c> would do for that branch).</summary>
+    public async Task FetchRemoteBranchAsync(string remote, string branch, CancellationToken ct = default)
+    {
+        await EnsureRemoteAsync(remote, ct);
+        branch = ValidateRev(branch, "branch");
+        await Run(ct, "fetch", "--no-tags", "--quiet", remote, $"+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
+    }
+
+    /// <summary>
+    /// Pull/merge request refs advertised by a remote: GitHub-style <c>refs/pull/N/head</c> and
+    /// <c>refs/pull/N/merge</c> (the latter only exists while a PR is open), and GitLab's
+    /// <c>refs/merge-requests/N/head</c>. Uses the network, with your normal git credentials.
+    /// </summary>
+    public async Task<List<RemotePullRef>> ListRemotePullRefsAsync(string remote, CancellationToken ct = default)
+    {
+        await EnsureRemoteAsync(remote, ct);
+        var output = await Run(ct, "ls-remote", "--refs", remote, "refs/pull/*/head", "refs/pull/*/merge", "refs/merge-requests/*/head");
+        var result = new List<RemotePullRef>();
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = line.Split('\t');
+            if (parts.Length != 2) continue;
+            var segments = parts[1].Split('/');
+            // refs/pull/123/head | refs/pull/123/merge | refs/merge-requests/123/head
+            if (segments.Length != 4 || !int.TryParse(segments[2], NumberStyles.None, CultureInfo.InvariantCulture, out var number)) continue;
+            result.Add(new RemotePullRef(number, segments[1] == "merge-requests" ? "mr" : segments[3], parts[0].Trim()));
+        }
+        return result;
+    }
+
+    private async Task EnsureRemoteAsync(string remote, CancellationToken ct)
+    {
+        var info = await GetInfoAsync(ct);
+        if (!info.Remotes.Contains(remote)) throw new GitException($"Unknown remote '{remote}'. Known remotes: {string.Join(", ", info.Remotes)}");
+    }
+
     /// <summary>Fetches a pull/merge request head from a remote into <c>refs/reviewtool/...</c>.</summary>
     public async Task<string> FetchPullRequestAsync(string remote, int number, string provider = "github", CancellationToken ct = default)
     {

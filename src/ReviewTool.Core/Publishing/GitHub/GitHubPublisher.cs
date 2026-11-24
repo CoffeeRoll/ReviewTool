@@ -56,6 +56,36 @@ public sealed class GitHubPublisher(HttpClient http, GitHubOptions options) : IR
         return json is JsonArray { Count: > 0 } list ? ToPullRequest(list[0]!) : null;
     }
 
+    public async Task<List<PullRequestSummary>> ListOpenPullRequestsAsync(RemoteRepository remote, string token, CancellationToken ct)
+    {
+        var result = new List<PullRequestSummary>();
+        for (var page = 1; page <= 3; page++) // up to 300 open PRs
+        {
+            var json = await SendAsync(HttpMethod.Get, $"{Repo(remote)}/pulls?state=open&sort=created&direction=desc&per_page=100&page={page}", token, null, ct);
+            if (json is not JsonArray list || list.Count == 0) break;
+            foreach (var pr in list)
+            {
+                if (pr == null) continue;
+                result.Add(new PullRequestSummary(
+                    pr["number"]!.GetValue<int>(),
+                    pr["title"]?.GetValue<string>() ?? "",
+                    pr["user"]?["login"]?.GetValue<string>() ?? "",
+                    pr["html_url"]?.GetValue<string>() ?? "",
+                    pr["head"]?["ref"]?.GetValue<string>() ?? "",
+                    pr["base"]?["ref"]?.GetValue<string>() ?? "",
+                    pr["head"]?["sha"]?.GetValue<string>() ?? "",
+                    Date(pr["created_at"]),
+                    Date(pr["updated_at"]),
+                    pr["draft"]?.GetValue<bool>() ?? false));
+            }
+            if (list.Count < 100) break;
+        }
+        return result;
+    }
+
+    private static DateTimeOffset? Date(JsonNode? node)
+        => node is JsonValue v && v.TryGetValue<string>(out var s) && DateTimeOffset.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var d) ? d : null;
+
     public async Task<PublishOutcome> PublishAsync(PublishContext context, CancellationToken ct)
     {
         var warnings = new List<string>();

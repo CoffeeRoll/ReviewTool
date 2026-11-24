@@ -75,6 +75,7 @@ public static class ReviewToolApi
         services.AddSingleton<IReviewPublisher>(sp =>
             new GitHubPublisher(sp.GetRequiredService<IHttpClientFactory>().CreateClient("publishing"), gitHubOptions));
         services.AddSingleton<PublishingService>();
+        services.AddSingleton<PullRequestService>();
         services.AddProblemDetails();
         return services;
     }
@@ -114,6 +115,7 @@ public static class ReviewToolApi
             await (await svc.OpenRepoAsync(path, ct)).GetInfoAsync(ct));
         repo.MapGet("/refs", async (string path, ReviewService svc, CancellationToken ct) =>
             await (await svc.OpenRepoAsync(path, ct)).ListRefsAsync(ct));
+        repo.MapGet("/pulls", (string path, string? remote, PullRequestService svc, CancellationToken ct) => svc.ListOpenAsync(path, remote, ct));
         repo.MapGet("/commits", async (string path, string @base, string head, ReviewService svc, CancellationToken ct) =>
         {
             var r = await svc.OpenRepoAsync(path, ct);
@@ -123,6 +125,7 @@ public static class ReviewToolApi
         // ---- Reviews ----
         var reviews = api.MapGroup("/reviews");
         reviews.MapGet("/", (ReviewService svc, CancellationToken ct) => svc.ListAsync(ct));
+        reviews.MapGet("/pr-states", (PullRequestService svc, CancellationToken ct) => svc.GetReviewPullRequestStatesAsync(ct));
         reviews.MapPost("/", async (CreateReviewRequest req, ReviewService svc, CancellationToken ct) =>
         {
             var review = await svc.CreateAsync(req, ct);

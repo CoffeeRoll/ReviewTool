@@ -18,6 +18,39 @@ public class PublishException(string message) : Exception(message);
 /// <summary>A pull/merge request on a hosting platform.</summary>
 public sealed record PullRequestInfo(int Number, string Title, string Url, string HeadSha, string HeadRef, string BaseRef, string State);
 
+/// <summary>An open pull request as listed by a hosting platform.</summary>
+public sealed record PullRequestSummary(
+    int Number,
+    string Title,
+    string Author,
+    string Url,
+    string HeadRef,
+    string BaseRef,
+    string HeadSha,
+    DateTimeOffset? CreatedAt,
+    DateTimeOffset? UpdatedAt,
+    bool Draft);
+
+/// <summary>An open pull request offered for review, with any review of it already started.</summary>
+public sealed record OpenPullRequestEntry(
+    int Number,
+    string? Title,
+    string? Author,
+    string? Url,
+    string? HeadRef,
+    string? BaseRef,
+    DateTimeOffset? CreatedAt,
+    DateTimeOffset? UpdatedAt,
+    bool Draft,
+    string? ReviewId,
+    int ReviewedFiles,
+    int TotalFiles);
+
+/// <summary>Open pull requests for a repository and where the list came from.</summary>
+/// <param name="Source">The platform id (e.g. "github") or "git" when read from the remote's refs.</param>
+/// <param name="Note">Why the list is limited (not signed in, couldn't reach the remote, ...), if it is.</param>
+public sealed record OpenPullRequestList(string Source, string SourceName, string? Remote, string? Repository, string? WebUrl, string? Note, List<OpenPullRequestEntry> PullRequests);
+
 /// <summary>Where a note can be attached in the pull request's diff (head version for New, base for Old).</summary>
 public sealed record InlinePosition(string Path, DiffSide Side, int StartLine, int EndLine);
 

@@ -80,4 +80,7 @@ public sealed record MovedBlock(string FromPath, int FromStart, int FromEnd, str
 }
 
 /// <summary>A commit (in a range) that touches a file, with the file's path in that commit.</summary>
+/// <summary>A pull request ref on a remote; Kind is "head", "merge" (GitHub, open PRs only) or "mr" (GitLab).</summary>
+public sealed record RemotePullRef(int Number, string Kind, string Sha);
+
 public sealed record FileHistoryEntry(string Sha, string Path, string? OldPath, ChangeKind Status);

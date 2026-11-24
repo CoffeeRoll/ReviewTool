@@ -365,3 +365,32 @@ export interface PublishRequestBody {
   includeResolved?: boolean;
   republish?: boolean;
 }
+
+// ---- Open pull requests (home page) ----
+export interface OpenPullRequestEntry {
+  number: number;
+  title: string | null;
+  author: string | null;
+  url: string | null;
+  headRef: string | null;
+  baseRef: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  draft: boolean;
+  /** A review already started for this PR (by number or by its branch). */
+  reviewId: string | null;
+  reviewedFiles: number;
+  totalFiles: number;
+}
+
+export interface OpenPullRequestList {
+  /** Platform id ("github") or "git" when read from the remote's refs. */
+  source: string;
+  sourceName: string;
+  remote: string | null;
+  repository: string | null;
+  webUrl: string | null;
+  /** Why the list is limited, if it is. */
+  note: string | null;
+  pullRequests: OpenPullRequestEntry[];
+}

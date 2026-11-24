@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ThemeToggle } from '../components/Controls';
+import { OpenPullRequests } from '../components/OpenPullRequests';
 import { ProgressRing } from '../components/Sidebar';
 import { api } from '../lib/api';
 import { relativeTime, shortSha } from '../lib/diff';
@@ -26,11 +27,33 @@ function rememberRepo(path: string) {
 export function HomePage({ initialRepo }: { initialRepo?: string }) {
   const [reviews, setReviews] = useState<ReviewSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [repo, setRepo] = useState<RepoInfo | null>(null);
+  const [prStates, setPrStates] = useState<Record<string, string>>({});
+  const [showFinished, setShowFinished] = useState(false);
 
   const load = () => api.listReviews().then(setReviews, (e: Error) => setError(e.message));
   useEffect(() => {
     load();
+    // Which reviewed PRs have since been merged or closed (needs the hosting site; silently skipped if unavailable).
+    api.reviewPullRequestStates().then(setPrStates, () => undefined);
   }, []);
+
+  // Reviews of PRs that are merged or closed move to their own (collapsed) section.
+  const finished = (r: ReviewSummary) => prStates[r.id] === 'merged' || prStates[r.id] === 'closed';
+  const active = reviews?.filter((r) => !finished(r)) ?? [];
+  const done = reviews?.filter(finished) ?? [];
+  const row = (r: ReviewSummary) => (
+    <ReviewRow
+      key={r.id}
+      review={r}
+      prState={prStates[r.id]}
+      onDelete={async () => {
+        if (!confirm(`Delete review "${r.name}" and all of its notes?`)) return;
+        await api.deleteReview(r.id);
+        load();
+      }}
+    />
+  );
 
   return (
     <div className="home">
@@ -41,31 +64,29 @@ export function HomePage({ initialRepo }: { initialRepo?: string }) {
         </div>
         <ThemeToggle />
       </header>
-      <NewReviewForm reviewRepos={reviews?.map((r) => r.repoPath) ?? []} initialRepo={initialRepo} />
+      <NewReviewForm reviewRepos={reviews?.map((r) => r.repoPath) ?? []} initialRepo={initialRepo} onRepoLoaded={setRepo} />
+      {repo && <OpenPullRequests key={repo.path} repo={repo} />}
       <section className="card">
-        <h2>Reviews</h2>
+        <h2>Your reviews</h2>
         {error && <p className="error">{error}</p>}
         {!reviews && !error && <p className="muted">Loading…</p>}
         {reviews?.length === 0 && <p className="muted">No reviews yet. Start one above.</p>}
-        <ul className="review-list">
-          {reviews?.map((r) => (
-            <ReviewRow
-              key={r.id}
-              review={r}
-              onDelete={async () => {
-                if (!confirm(`Delete review "${r.name}" and all of its notes?`)) return;
-                await api.deleteReview(r.id);
-                load();
-              }}
-            />
-          ))}
-        </ul>
+        {reviews && reviews.length > 0 && active.length === 0 && <p className="muted">Nothing in progress.</p>}
+        <ul className="review-list">{active.map(row)}</ul>
+        {done.length > 0 && (
+          <div className="finished-reviews">
+            <button className="btn-link" onClick={() => setShowFinished((s) => !s)} aria-expanded={showFinished}>
+              {showFinished ? '▾' : '▸'} Merged or closed ({done.length})
+            </button>
+            {showFinished && <ul className="review-list">{done.map(row)}</ul>}
+          </div>
+        )}
       </section>
     </div>
   );
 }
 
-function ReviewRow({ review: r, onDelete }: { review: ReviewSummary; onDelete: () => void }) {
+function ReviewRow({ review: r, prState, onDelete }: { review: ReviewSummary; prState?: string; onDelete: () => void }) {
   const status = REVIEW_STATUSES.find((s) => s.value === r.status)?.label ?? r.status;
   const pct = r.fileCount === 0 ? 100 : Math.round((r.reviewedFileCount / r.fileCount) * 100);
   return (
@@ -76,6 +97,11 @@ function ReviewRow({ review: r, onDelete }: { review: ReviewSummary; onDelete: (
           <div className="review-row-title">
             <strong>{r.name}</strong>
             <span className={`badge status-${r.status.toLowerCase()}`}>{status}</span>
+            {r.pullRequest && prState && (
+              <span className={`badge pr-state pr-${prState}`} title={`Pull request #${r.pullRequest.number} is ${prState}`}>
+                PR {prState}
+              </span>
+            )}
           </div>
           <div className="muted small ellipsis">
             <span className="mono">{r.baseRef}</span> ← <span className="mono">{r.headRef}</span> ({shortSha(r.headSha)}) · {r.repoPath}
@@ -103,7 +129,15 @@ function ReviewRow({ review: r, onDelete }: { review: ReviewSummary; onDelete: (
 
 type Mode = 'branches' | 'pr';
 
-function NewReviewForm({ reviewRepos, initialRepo }: { reviewRepos: string[]; initialRepo?: string }) {
+function NewReviewForm({
+  reviewRepos,
+  initialRepo,
+  onRepoLoaded,
+}: {
+  reviewRepos: string[];
+  initialRepo?: string;
+  onRepoLoaded: (repo: RepoInfo | null) => void;
+}) {
   const recents = useMemo(() => [...new Set([...recentRepos(), ...reviewRepos])], [reviewRepos]);
   const [path, setPath] = useState(initialRepo ?? recents[0] ?? '');
   const [repo, setRepo] = useState<{ info: RepoInfo; refs: RepoRefs } | null>(null);
@@ -121,10 +155,12 @@ function NewReviewForm({ reviewRepos, initialRepo }: { reviewRepos: string[]; in
   const loadRepo = async (p = path) => {
     setError(null);
     setRepo(null);
+    onRepoLoaded(null);
     if (!p.trim()) return;
     try {
       const [info, refs] = await Promise.all([api.repoInfo(p), api.repoRefs(p)]);
       setRepo({ info, refs });
+      onRepoLoaded(info);
       setPath(info.path);
       setBase(refs.defaultBranch ?? '');
       setHead(refs.currentBranch && refs.currentBranch !== refs.defaultBranch ? refs.currentBranch : '');
@@ -179,7 +215,8 @@ function NewReviewForm({ reviewRepos, initialRepo }: { reviewRepos: string[]; in
     }
   };
 
-  const refNames = repo?.refs.refs.map((r) => r.name) ?? [];
+  // ReviewTool's own fetched-PR refs (refs/reviewtool/...) aren't useful as suggestions.
+  const refNames = repo?.refs.refs.filter((r) => !r.name.startsWith('refs/reviewtool/')).map((r) => r.name) ?? [];
   const canCreate = !!repo && !!base && (mode === 'branches' ? !!head && !preview?.error && preview?.commits?.length !== 0 : Number(prNumber) > 0);
 
   return (

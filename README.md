@@ -72,6 +72,15 @@ specific lines. Your progress is saved, so you can stop and pick the review up a
     code on screen. Remembered across reviews, like the theme.
 - **Post to GitHub.** Send the review (summary, verdict and notes) to the pull request. Notes become
   inline comments wherever their code is still in the final diff (see *Posting to GitHub*).
+- **Open pull requests list.** Once you pick a repository, the home page lists its open pull requests,
+  newest first, in a scrollable list you can search by number, title, author or branch.
+  - Click one to start reviewing it (the PR and its base branch are fetched fresh), or to resume your
+    review if you've already started.
+  - With GitHub sign-in (see *Posting to GitHub*), the list comes from GitHub, with titles and authors.
+    Without it, ReviewTool reads the remote's pull request refs with git and shows just the numbers.
+    On GitHub only open PRs have a "merge" ref, so merged ones are still left out.
+  - **Your reviews** puts reviews of PRs that have since been merged or closed in their own collapsed
+    section, so the ones still open come first.
 - **Pull requests by number.** Enter a PR number and ReviewTool fetches its head
   (`pull/N/head` for GitHub/Gitea, `merge-requests/N/head` for GitLab) with your normal git
   credentials.
@@ -307,6 +316,8 @@ implementation (e.g. a database) in place of the JSON file store.
 | Method & path | |
 | --- | --- |
 | `GET /api/repo?path=` · `GET /api/repo/refs?path=` · `GET /api/repo/commits?path=&base=&head=` | Inspect a repository |
+| `GET /api/repo/pulls?path=&remote=` | Open pull requests (GitHub, or the remote's git refs), with any review already started |
+| `GET /api/reviews/pr-states` | Whether the PR behind each review is open, merged or closed |
 | `GET/POST /api/reviews` | List / create reviews (`{ repoPath, baseRef, headRef, name?, pullRequest? }`) |
 | `GET/PATCH/DELETE /api/reviews/{id}` | Read / update (name, summary, status, uiState) / delete |
 | `POST /api/reviews/{id}/refresh` | Re-read branches (re-fetches the PR) |

@@ -79,6 +79,7 @@ public sealed class ReviewService(IReviewStore store, GitRunner git)
             var provider = string.IsNullOrWhiteSpace(prInput.Provider) ? "github" : prInput.Provider.Trim();
             headRef = await repo.FetchPullRequestAsync(remote, prInput.Number, provider, ct);
             pr = new PullRequestRef { Remote = remote, Number = prInput.Number, Provider = provider };
+            await FetchBaseAsync(repo, remote, request.BaseRef, ct);
         }
         if (string.IsNullOrWhiteSpace(headRef)) headRef = refs.CurrentBranch ?? "HEAD";
 
@@ -135,6 +136,17 @@ public sealed class ReviewService(IReviewStore store, GitRunner git)
         catch (GitException) { return (existing, false); } // e.g. offline PR re-fetch; resume what we have
     }
 
+    /// <summary>
+    /// For a PR review whose base is a branch of the PR's remote (e.g. "origin/main"), updates that branch
+    /// first so the commit range isn't based on a stale copy. Best effort: offline keeps the local copy.
+    /// </summary>
+    private static async Task FetchBaseAsync(GitRepository repo, string remote, string? baseRef, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(baseRef) || !baseRef.StartsWith(remote + "/", StringComparison.Ordinal)) return;
+        try { await repo.FetchRemoteBranchAsync(remote, baseRef[(remote.Length + 1)..], ct); }
+        catch (GitException) { }
+    }
+
     /// <summary>Re-resolves base/head (re-fetching the PR if needed) and updates the commit list, keeping notes and progress.</summary>
     public async Task<Review> RefreshAsync(string id, CancellationToken ct = default)
     {
@@ -144,6 +156,7 @@ public sealed class ReviewService(IReviewStore store, GitRunner git)
         {
             try { await repo.FetchPullRequestAsync(pr.Remote, pr.Number, pr.Provider, ct); }
             catch (GitException) { /* offline: fall back to the last fetched head */ }
+            await FetchBaseAsync(repo, pr.Remote, existing.BaseRef, ct);
         }
         return await store.UpdateAsync(id, r => PopulateCommitsAsync(repo, r, ct), ct) ?? throw new ReviewNotFoundException(id);
     }

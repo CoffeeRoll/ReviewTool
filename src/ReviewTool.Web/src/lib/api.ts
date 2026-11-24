@@ -10,6 +10,7 @@ import type {
   LaterChange,
   MovedBlock,
   NoteFollowUp,
+  OpenPullRequestList,
   PublishPreview,
   PublishRequestBody,
   PublishResult,
@@ -67,6 +68,11 @@ const enc = encodeURIComponent;
 export const api = {
   repoInfo: (path: string) => request<RepoInfo>('GET', `/repo${q({ path })}`),
   repoRefs: (path: string) => request<RepoRefs>('GET', `/repo/refs${q({ path })}`),
+  openPullRequests: (path: string, remote?: string | null) => request<OpenPullRequestList>('GET', `/repo/pulls${q({ path, remote })}`),
+  /** State ("open" | "merged" | "closed") of the PR behind each review started from a PR, keyed by review id. */
+  reviewPullRequestStates: () => request<Record<string, string>>('GET', '/reviews/pr-states'),
+  /** Resumes the matching review or starts a new one. */
+  openReview: (req: CreateReviewRequest) => request<{ review: Review; created: boolean }>('POST', '/reviews/open', req),
   repoCommits: (path: string, base: string, head: string, signal?: AbortSignal) =>
     request<CommitInfo[]>('GET', `/repo/commits${q({ path, base, head })}`, undefined, signal),
 

@@ -87,12 +87,34 @@ internal sealed class FakeGitHub : HttpMessageHandler
             ["head"] = new JsonObject { ["sha"] = HeadSha, ["ref"] = "feat" },
             ["base"] = new JsonObject { ["ref"] = "main" },
         };
-        if (request.Method == HttpMethod.Get && url.Contains("/pulls?", StringComparison.Ordinal))
+        if (request.Method == HttpMethod.Get && url.Contains("/pulls?", StringComparison.Ordinal) && url.Contains("head=", StringComparison.Ordinal))
             return Json(url.Contains("head=acme%3Afeat", StringComparison.Ordinal) ? new JsonArray(pr) : new JsonArray());
+        if (request.Method == HttpMethod.Get && url.Contains("/pulls?state=open", StringComparison.Ordinal))
+            return Json(url.Contains("page=1", StringComparison.Ordinal) ? OpenList() : new JsonArray());
+        if (request.Method == HttpMethod.Get && url.EndsWith("/pulls/5", StringComparison.Ordinal))
+            return Json(new JsonObject { ["number"] = 5, ["title"] = "Old one", ["state"] = "closed", ["merged_at"] = "2026-01-01T00:00:00Z", ["head"] = new JsonObject { ["sha"] = "x", ["ref"] = "old" }, ["base"] = new JsonObject { ["ref"] = "main" } });
         if (request.Method == HttpMethod.Get && url.EndsWith("/pulls/7", StringComparison.Ordinal)) return Json(pr);
         if (request.Method == HttpMethod.Post && url.EndsWith("/pulls/7/reviews", StringComparison.Ordinal))
             return OnReview?.Invoke(body!) ?? Json(new JsonObject { ["id"] = 99, ["html_url"] = "https://github.com/acme/demo/pull/7#pullrequestreview-99" });
         return new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{\"message\":\"Not Found\"}") };
+    }
+
+    /// <summary>Open PRs, newest first (as GitHub returns them with sort=created&amp;direction=desc).</summary>
+    private static JsonArray OpenList()
+    {
+        JsonObject Pr(int n, string title, string head, string created, bool draft = false) => new()
+        {
+            ["number"] = n,
+            ["title"] = title,
+            ["html_url"] = $"https://github.com/acme/demo/pull/{n}",
+            ["user"] = new JsonObject { ["login"] = "dev" + n },
+            ["head"] = new JsonObject { ["ref"] = head, ["sha"] = new string((char)('a' + n), 40) },
+            ["base"] = new JsonObject { ["ref"] = "main" },
+            ["created_at"] = created,
+            ["updated_at"] = created,
+            ["draft"] = draft,
+        };
+        return new JsonArray(Pr(9, "Newest change", "topic-9", "2026-11-20T10:00:00Z", draft: true), Pr(7, "Add feature", "feat", "2026-11-10T10:00:00Z"), Pr(3, "Oldest open", "topic-3", "2026-10-01T10:00:00Z"));
     }
 
     public static HttpResponseMessage Json(JsonNode node, HttpStatusCode status = HttpStatusCode.OK)
